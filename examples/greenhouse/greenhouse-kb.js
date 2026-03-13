@@ -2,7 +2,7 @@
 // greenhouse-kb.js — Prolog rules for greenhouse sensor mesh
 //
 // Four node roles: coordinator, sensor, estimator, gateway.
-// Signal policy + alert detection + VPD + aggregation.
+// Signal policy via ephemeral/react + alert detection + VPD.
 // ============================================================
 
 import { loadString } from "../../src/loader.js";
@@ -13,52 +13,82 @@ threshold(temperature, 5, 40).
 threshold(humidity, 20, 85).
 threshold(vpd, 40, 160).
 
-% ── Signal policy: on_signal(From, Fact, Action) ─────────
-%
-% Each node role accepts different signals.
-% No matching clause = signal is ignored.
+% ── Signal handling ──────────────────────────────────────
+handle_signal(From, Fact) :- ephemeral(signal(From, Fact)), react.
+
+% ── React rules ──────────────────────────────────────────
+% Pattern-match on signal/2 and upsert permanent facts.
+% Spoofing protection: signal(From, reading(From, ...)).
 
 % -- Coordinator --
-% Accept readings from online sensors (spoofing protection)
-on_signal(From, reading(From, Type, Val, Ts), assert) :-
-    node_role(coordinator),
-    node_status(From, online).
+react :- signal(From, reading(From, Type, Val, Ts)),
+         node_role(coordinator),
+         node_status(From, online),
+         retractall(reading(From, Type, A, B)),
+         assert(reading(From, Type, Val, Ts)),
+         check_alerts(From, Type).
 
-% Accept estimates from estimator
-on_signal(estimator, estimate(Type, Node, Val, Confidence, Ts), assert) :-
-    node_role(coordinator).
+check_alerts(Node, Type) :-
+    alert(Node, Type, Level),
+    send(gateway, alert_notice(Node, Type, Level)).
+check_alerts(A, B).
 
-% Accept node_status from anyone
-on_signal(From, node_status(From, Status), assert) :-
-    node_role(coordinator).
+react :- signal(estimator, estimate(Type, Node, Val, Confidence, Ts)),
+         node_role(coordinator),
+         retractall(estimate(Type, Node, A, B, C)),
+         assert(estimate(Type, Node, Val, Confidence, Ts)),
+         send(gateway, estimate(Type, Node, Val, Confidence, Ts)).
+
+react :- signal(From, node_status(From, Status)),
+         node_role(coordinator),
+         retractall(node_status(From, A)),
+         assert(node_status(From, Status)).
 
 % -- Estimator --
-% Accept readings from online sensors
-on_signal(From, reading(From, Type, Val, Ts), assert) :-
-    node_role(estimator),
-    node_status(From, online).
+react :- signal(From, reading(From, Type, Val, Ts)),
+         node_role(estimator),
+         node_status(From, online),
+         retractall(reading(From, Type, A, B)),
+         assert(reading(From, Type, Val, Ts)),
+         try_vpd(From, Ts).
 
-% Accept node_status
-on_signal(From, node_status(From, Status), assert) :-
-    node_role(estimator).
+try_vpd(Sensor, Ts) :-
+    reading(Sensor, temperature, Temp, A),
+    reading(Sensor, humidity, Hum, B),
+    compute_vpd(Temp, Hum, Vpd),
+    retractall(estimate(vpd, Sensor, X, Y, Z)),
+    assert(estimate(vpd, Sensor, Vpd, 100, Ts)),
+    send(coordinator, estimate(vpd, Sensor, Vpd, 100, Ts)).
+try_vpd(A, B).
+
+react :- signal(From, node_status(From, Status)),
+         node_role(estimator),
+         retractall(node_status(From, A)),
+         assert(node_status(From, Status)).
 
 % -- Gateway --
-% Accept estimates from estimator
-on_signal(estimator, estimate(Type, Node, Val, Confidence, Ts), assert) :-
-    node_role(gateway).
+react :- signal(coordinator, estimate(Type, Node, Val, Confidence, Ts)),
+         node_role(gateway),
+         retractall(estimate(Type, Node, A, B, C)),
+         assert(estimate(Type, Node, Val, Confidence, Ts)).
 
-% Accept alert_notice from coordinator
-on_signal(coordinator, alert_notice(Node, Type, Level), assert) :-
-    node_role(gateway).
+react :- signal(coordinator, alert_notice(Node, Type, Level)),
+         node_role(gateway),
+         retractall(alert_notice(Node, Type, A)),
+         assert(alert_notice(Node, Type, Level)).
 
 % -- Sensor --
-% Accept calibration from coordinator
-on_signal(coordinator, calibration(Sensor, Type, Offset), assert) :-
-    node_role(sensor).
+react :- signal(coordinator, calibration(Sensor, Type, Offset)),
+         node_role(sensor),
+         retractall(calibration(Sensor, Type, A)),
+         assert(calibration(Sensor, Type, Offset)).
 
-% Accept threshold updates from coordinator
-on_signal(coordinator, threshold(Type, Min, Max), assert) :-
-    node_role(sensor).
+react :- signal(coordinator, threshold(Type, Min, Max)),
+         node_role(sensor),
+         retractall(threshold(Type, A, B)),
+         assert(threshold(Type, Min, Max)).
+
+% No catch-all — unmatched signals are dropped
 
 % ── Alert detection ──────────────────────────────────────
 alert(Node, temperature, high) :-
@@ -135,35 +165,17 @@ export function buildGreenhouseKB(PrologEngine, nodeId, role) {
     if (u !== null) engine.solve(r, u, ctr, d + 1, cb);
   };
 
+  // compute_vpd/3 — Magnus formula for vapor pressure deficit
+  engine.builtins["compute_vpd/3"] = function(g, r, s, ctr, d, cb) {
+    var temp = engine.deepWalk(g.args[0], s);
+    var hum = engine.deepWalk(g.args[1], s);
+    if (temp.type !== "num" || hum.type !== "num") return;
+    var es = 0.6108 * Math.exp(17.27 * temp.value / (temp.value + 237.3));
+    var ea = es * hum.value / 100;
+    var vpd = Math.round((es - ea) * 100);
+    var u = engine.unify(g.args[2], PrologEngine.num(vpd), s);
+    if (u !== null) engine.solve(r, u, ctr, d + 1, cb);
+  };
+
   return engine;
-}
-
-// ── Helpers: update dynamic facts ───────────────────────────
-
-/** Replace reading for a given node+type (upsert). */
-export function updateReading(engine, PrologEngine, nodeId, sensorType, value, timestamp) {
-  const { atom, compound, variable, num } = PrologEngine;
-  engine.retractFirst(compound("reading", [atom(nodeId), atom(sensorType), variable("_V"), variable("_T")]));
-  engine.addClause(compound("reading", [atom(nodeId), atom(sensorType), num(value), num(timestamp)]));
-}
-
-/** Set node status (upsert). */
-export function setNodeStatus(engine, PrologEngine, nodeId, status) {
-  const { atom, compound, variable } = PrologEngine;
-  engine.retractFirst(compound("node_status", [atom(nodeId), variable("_S")]));
-  engine.addClause(compound("node_status", [atom(nodeId), atom(status)]));
-}
-
-/** Update threshold (upsert). */
-export function updateThreshold(engine, PrologEngine, sensorType, min, max) {
-  const { atom, compound, variable, num } = PrologEngine;
-  engine.retractFirst(compound("threshold", [atom(sensorType), variable("_Min"), variable("_Max")]));
-  engine.addClause(compound("threshold", [atom(sensorType), num(min), num(max)]));
-}
-
-/** Update estimate (upsert). */
-export function updateEstimate(engine, PrologEngine, type, nodeId, value, confidence, timestamp) {
-  const { atom, compound, variable, num } = PrologEngine;
-  engine.retractFirst(compound("estimate", [atom(type), atom(nodeId), variable("_V"), variable("_C"), variable("_T")]));
-  engine.addClause(compound("estimate", [atom(type), atom(nodeId), num(value), num(confidence), num(timestamp)]));
 }

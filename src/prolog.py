@@ -103,6 +103,8 @@ class Engine:
         self.clauses = []
         self.builtins = {}
         self._var_counter = 0
+        self._output = []
+        self._sends = []
         self._register_builtins()
 
     # ── Clause management ────────────────────────────────────
@@ -190,6 +192,16 @@ class Engine:
         except _Found as f:
             return f.result
         return None
+
+    def query_with_sends(self, goal):
+        self._sends = []
+        self._output = []
+        result = self.query_first(goal)
+        sends = list(self._sends)
+        output = list(self._output)
+        self._sends = []
+        self._output = []
+        return {"result": result, "sends": sends, "output": output}
 
     # ── Builtins ─────────────────────────────────────────────
 
@@ -377,6 +389,13 @@ class Engine:
                 eng._solve(rest, subst, depth + 1, on_sol)
         self.builtins["retract/1"] = _retract
 
+        def _retractall(goal, rest, subst, depth, on_sol):
+            term = deep_walk(goal[2][0], subst)
+            while eng.retract_first(term):
+                pass
+            eng._solve(rest, subst, depth + 1, on_sol)
+        self.builtins["retractall/1"] = _retractall
+
         # findall/3
         def _findall(goal, rest, subst, depth, on_sol):
             template = goal[2][0]
@@ -392,6 +411,14 @@ class Engine:
             if s is not None:
                 eng._solve(rest, s, depth + 1, on_sol)
         self.builtins["findall/3"] = _findall
+
+        # send/2
+        def _send(goal, rest, subst, depth, on_sol):
+            target = deep_walk(goal[2][0], subst)
+            fact = deep_walk(goal[2][1], subst)
+            eng._sends.append((target, fact))
+            eng._solve(rest, subst, depth + 1, on_sol)
+        self.builtins["send/2"] = _send
 
 
 # ── Arithmetic evaluator ─────────────────────────────────────

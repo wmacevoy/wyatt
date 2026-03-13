@@ -7,11 +7,9 @@
 
 import { PrologEngine, termToString, listToArray } from "../../src/prolog-engine.js";
 import { serialize, deserialize, termEq } from "../../src/sync.js";
+import { createReactiveEngine } from "../../src/reactive-prolog.js";
 import { SimBus } from "../nng-mesh/transport.js";
-import {
-  buildGreenhouseKB, updateReading, setNodeStatus,
-  updateThreshold, updateEstimate
-} from "./greenhouse-kb.js";
+import { buildGreenhouseKB } from "./greenhouse-kb.js";
 import { GreenhouseNode } from "./node.js";
 
 const { atom, variable, compound, num } = PrologEngine;
@@ -47,6 +45,14 @@ function fullMesh() {
     { id: "estimator", role: "estimator" },
     { id: "gateway", role: "gateway" }
   ]);
+}
+
+// ── Helper: build a reactive engine for policy tests ────
+
+function buildReactiveKB(nodeId, role) {
+  const engine = buildGreenhouseKB(PrologEngine, nodeId, role);
+  createReactiveEngine(engine); // registers ephemeral/1
+  return engine;
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -123,50 +129,53 @@ describe("Greenhouse KB rules", () => {
 
 describe("Signal policy — coordinator", () => {
   it("accepts reading from online sensor", () => {
-    const e = buildGreenhouseKB(PrologEngine, "coordinator", "coordinator");
-    setNodeStatus(e, PrologEngine, "s1", "online");
+    const e = buildReactiveKB("coordinator", "coordinator");
+    e.addClause(compound("node_status", [atom("s1"), atom("online")]));
     const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
-    const r = e.queryFirst(compound("on_signal", [atom("s1"), fact, variable("A")]));
-    assert(r !== null);
-    eq(r.args[2].name, "assert");
+    const r = e.queryFirst(compound("handle_signal", [atom("s1"), fact]));
+    assert(r !== null, "should accept reading");
+    const reading = e.queryFirst(compound("reading", [atom("s1"), atom("temperature"), variable("V"), variable("T")]));
+    eq(reading.args[2].value, 22);
   });
 
   it("rejects reading from unknown sensor", () => {
-    const e = buildGreenhouseKB(PrologEngine, "coordinator", "coordinator");
+    const e = buildReactiveKB("coordinator", "coordinator");
     const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
-    const r = e.queryFirst(compound("on_signal", [atom("s1"), fact, variable("A")]));
+    const r = e.queryFirst(compound("handle_signal", [atom("s1"), fact]));
     eq(r, null);
   });
 
   it("rejects spoofed reading (From mismatch)", () => {
-    const e = buildGreenhouseKB(PrologEngine, "coordinator", "coordinator");
-    setNodeStatus(e, PrologEngine, "s1", "online");
+    const e = buildReactiveKB("coordinator", "coordinator");
+    e.addClause(compound("node_status", [atom("s1"), atom("online")]));
     const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
-    const r = e.queryFirst(compound("on_signal", [atom("s2"), fact, variable("A")]));
+    const r = e.queryFirst(compound("handle_signal", [atom("s2"), fact]));
     eq(r, null);
   });
 
   it("accepts estimate from estimator", () => {
-    const e = buildGreenhouseKB(PrologEngine, "coordinator", "coordinator");
+    const e = buildReactiveKB("coordinator", "coordinator");
     const fact = compound("estimate", [atom("vpd"), atom("s1"), num(80), num(100), num(1000)]);
-    const r = e.queryFirst(compound("on_signal", [atom("estimator"), fact, variable("A")]));
-    assert(r !== null);
-    eq(r.args[2].name, "assert");
+    const r = e.queryFirst(compound("handle_signal", [atom("estimator"), fact]));
+    assert(r !== null, "should accept estimate");
+    const est = e.queryFirst(compound("estimate", [atom("vpd"), atom("s1"), variable("V"), variable("C"), variable("T")]));
+    eq(est.args[2].value, 80);
   });
 
   it("rejects estimate from non-estimator", () => {
-    const e = buildGreenhouseKB(PrologEngine, "coordinator", "coordinator");
+    const e = buildReactiveKB("coordinator", "coordinator");
     const fact = compound("estimate", [atom("vpd"), atom("s1"), num(80), num(100), num(1000)]);
-    const r = e.queryFirst(compound("on_signal", [atom("rogue"), fact, variable("A")]));
+    const r = e.queryFirst(compound("handle_signal", [atom("rogue"), fact]));
     eq(r, null);
   });
 
   it("accepts node_status from anyone", () => {
-    const e = buildGreenhouseKB(PrologEngine, "coordinator", "coordinator");
+    const e = buildReactiveKB("coordinator", "coordinator");
     const fact = compound("node_status", [atom("new_node"), atom("online")]);
-    const r = e.queryFirst(compound("on_signal", [atom("new_node"), fact, variable("A")]));
-    assert(r !== null);
-    eq(r.args[2].name, "assert");
+    const r = e.queryFirst(compound("handle_signal", [atom("new_node"), fact]));
+    assert(r !== null, "should accept node_status");
+    const status = e.queryFirst(compound("node_status", [atom("new_node"), variable("S")]));
+    eq(status.args[1].name, "online");
   });
 });
 
@@ -174,32 +183,33 @@ describe("Signal policy — coordinator", () => {
 
 describe("Signal policy — sensor", () => {
   it("accepts calibration from coordinator", () => {
-    const e = buildGreenhouseKB(PrologEngine, "sensor_1", "sensor");
+    const e = buildReactiveKB("sensor_1", "sensor");
     const fact = compound("calibration", [atom("sensor_1"), atom("temperature"), num(2)]);
-    const r = e.queryFirst(compound("on_signal", [atom("coordinator"), fact, variable("A")]));
-    assert(r !== null);
-    eq(r.args[2].name, "assert");
+    const r = e.queryFirst(compound("handle_signal", [atom("coordinator"), fact]));
+    assert(r !== null, "should accept calibration");
   });
 
   it("accepts threshold from coordinator", () => {
-    const e = buildGreenhouseKB(PrologEngine, "sensor_1", "sensor");
+    const e = buildReactiveKB("sensor_1", "sensor");
     const fact = compound("threshold", [atom("temperature"), num(0), num(50)]);
-    const r = e.queryFirst(compound("on_signal", [atom("coordinator"), fact, variable("A")]));
-    assert(r !== null);
-    eq(r.args[2].name, "assert");
+    const r = e.queryFirst(compound("handle_signal", [atom("coordinator"), fact]));
+    assert(r !== null, "should accept threshold");
+    const th = e.queryFirst(compound("threshold", [atom("temperature"), variable("Min"), variable("Max")]));
+    eq(th.args[1].value, 0);
+    eq(th.args[2].value, 50);
   });
 
   it("ignores readings from other nodes", () => {
-    const e = buildGreenhouseKB(PrologEngine, "sensor_1", "sensor");
+    const e = buildReactiveKB("sensor_1", "sensor");
     const fact = compound("reading", [atom("s2"), atom("temperature"), num(22), num(1000)]);
-    const r = e.queryFirst(compound("on_signal", [atom("s2"), fact, variable("A")]));
+    const r = e.queryFirst(compound("handle_signal", [atom("s2"), fact]));
     eq(r, null);
   });
 
   it("ignores calibration from non-coordinator", () => {
-    const e = buildGreenhouseKB(PrologEngine, "sensor_1", "sensor");
+    const e = buildReactiveKB("sensor_1", "sensor");
     const fact = compound("calibration", [atom("sensor_1"), atom("temperature"), num(2)]);
-    const r = e.queryFirst(compound("on_signal", [atom("rogue"), fact, variable("A")]));
+    const r = e.queryFirst(compound("handle_signal", [atom("rogue"), fact]));
     eq(r, null);
   });
 });
@@ -208,25 +218,24 @@ describe("Signal policy — sensor", () => {
 
 describe("Signal policy — estimator", () => {
   it("accepts reading from online sensor", () => {
-    const e = buildGreenhouseKB(PrologEngine, "estimator", "estimator");
-    setNodeStatus(e, PrologEngine, "s1", "online");
+    const e = buildReactiveKB("estimator", "estimator");
+    e.addClause(compound("node_status", [atom("s1"), atom("online")]));
     const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
-    const r = e.queryFirst(compound("on_signal", [atom("s1"), fact, variable("A")]));
-    assert(r !== null);
-    eq(r.args[2].name, "assert");
+    const r = e.queryFirst(compound("handle_signal", [atom("s1"), fact]));
+    assert(r !== null, "should accept reading");
   });
 
   it("rejects reading from offline sensor", () => {
-    const e = buildGreenhouseKB(PrologEngine, "estimator", "estimator");
+    const e = buildReactiveKB("estimator", "estimator");
     const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
-    const r = e.queryFirst(compound("on_signal", [atom("s1"), fact, variable("A")]));
+    const r = e.queryFirst(compound("handle_signal", [atom("s1"), fact]));
     eq(r, null);
   });
 
   it("ignores calibration signals", () => {
-    const e = buildGreenhouseKB(PrologEngine, "estimator", "estimator");
+    const e = buildReactiveKB("estimator", "estimator");
     const fact = compound("calibration", [atom("s1"), atom("temperature"), num(2)]);
-    const r = e.queryFirst(compound("on_signal", [atom("coordinator"), fact, variable("A")]));
+    const r = e.queryFirst(compound("handle_signal", [atom("coordinator"), fact]));
     eq(r, null);
   });
 });
@@ -234,33 +243,33 @@ describe("Signal policy — estimator", () => {
 // ── Signal policy: gateway ──────────────────────────────────
 
 describe("Signal policy — gateway", () => {
-  it("accepts estimate from estimator", () => {
-    const e = buildGreenhouseKB(PrologEngine, "gateway", "gateway");
+  it("accepts estimate from coordinator", () => {
+    const e = buildReactiveKB("gateway", "gateway");
     const fact = compound("estimate", [atom("vpd"), atom("s1"), num(80), num(100), num(1000)]);
-    const r = e.queryFirst(compound("on_signal", [atom("estimator"), fact, variable("A")]));
-    assert(r !== null);
-    eq(r.args[2].name, "assert");
+    const r = e.queryFirst(compound("handle_signal", [atom("coordinator"), fact]));
+    assert(r !== null, "should accept estimate");
+    const est = e.queryFirst(compound("estimate", [atom("vpd"), atom("s1"), variable("V"), variable("C"), variable("T")]));
+    eq(est.args[2].value, 80);
   });
 
   it("accepts alert_notice from coordinator", () => {
-    const e = buildGreenhouseKB(PrologEngine, "gateway", "gateway");
+    const e = buildReactiveKB("gateway", "gateway");
     const fact = compound("alert_notice", [atom("s1"), atom("temperature"), atom("high")]);
-    const r = e.queryFirst(compound("on_signal", [atom("coordinator"), fact, variable("A")]));
-    assert(r !== null);
-    eq(r.args[2].name, "assert");
+    const r = e.queryFirst(compound("handle_signal", [atom("coordinator"), fact]));
+    assert(r !== null, "should accept alert_notice");
   });
 
   it("ignores readings", () => {
-    const e = buildGreenhouseKB(PrologEngine, "gateway", "gateway");
+    const e = buildReactiveKB("gateway", "gateway");
     const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
-    const r = e.queryFirst(compound("on_signal", [atom("s1"), fact, variable("A")]));
+    const r = e.queryFirst(compound("handle_signal", [atom("s1"), fact]));
     eq(r, null);
   });
 
-  it("rejects estimate from non-estimator", () => {
-    const e = buildGreenhouseKB(PrologEngine, "gateway", "gateway");
+  it("rejects estimate from non-coordinator", () => {
+    const e = buildReactiveKB("gateway", "gateway");
     const fact = compound("estimate", [atom("vpd"), atom("s1"), num(80), num(100), num(1000)]);
-    const r = e.queryFirst(compound("on_signal", [atom("rogue"), fact, variable("A")]));
+    const r = e.queryFirst(compound("handle_signal", [atom("rogue"), fact]));
     eq(r, null);
   });
 });
@@ -271,7 +280,7 @@ describe("GreenhouseNode integration", () => {
   it("sensor sends reading, coordinator accepts it", () => {
     const { nodes } = fullMesh();
     const coord = nodes.coordinator;
-    setNodeStatus(coord.engine, PrologEngine, "sensor_1", "online");
+    coord.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
     coord.reactive.bump();
 
     nodes.sensor_1.send("coordinator",
@@ -291,13 +300,13 @@ describe("GreenhouseNode integration", () => {
     const r = nodes.coordinator.queryFirst(
       compound("reading", [atom("sensor_1"), variable("T"), variable("V"), variable("Ts")]));
     eq(r, null);
-    eq(nodes.coordinator._signalLog[0].action, "ignore");
+    eq(nodes.coordinator._signalLog[0].accepted, false);
   });
 
   it("reading upserts (replaces old value)", () => {
     const { nodes } = fullMesh();
     const coord = nodes.coordinator;
-    setNodeStatus(coord.engine, PrologEngine, "sensor_1", "online");
+    coord.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
     coord.reactive.bump();
 
     nodes.sensor_1.send("coordinator",
@@ -333,17 +342,16 @@ describe("GreenhouseNode integration", () => {
   it("spoofed From is rejected", () => {
     const { nodes } = fullMesh();
     const coord = nodes.coordinator;
-    setNodeStatus(coord.engine, PrologEngine, "sensor_1", "online");
+    coord.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
     coord.reactive.bump();
 
-    // sensor_2 sends reading claiming to be sensor_1
     nodes.sensor_2.send("coordinator",
       compound("reading", [atom("sensor_1"), atom("temperature"), num(99), num(1000)]));
 
     const r = coord.queryFirst(
       compound("reading", [atom("sensor_1"), variable("T"), variable("V"), variable("Ts")]));
     eq(r, null);
-    eq(coord._signalLog[0].action, "ignore");
+    eq(coord._signalLog[0].accepted, false);
   });
 
   it("coordinator pushes threshold to sensor", () => {
@@ -351,7 +359,11 @@ describe("GreenhouseNode integration", () => {
     nodes.coordinator.send("sensor_1",
       compound("threshold", [atom("temperature"), num(0), num(50)]));
 
-    eq(nodes.sensor_1._signalLog[0].action, "assert");
+    eq(nodes.sensor_1._signalLog[0].accepted, true);
+    // Verify upserted
+    const th = nodes.sensor_1.queryFirst(compound("threshold", [atom("temperature"), variable("Min"), variable("Max")]));
+    eq(th.args[1].value, 0);
+    eq(th.args[2].value, 50);
   });
 
   it("sensor ignores calibration from non-coordinator", () => {
@@ -359,7 +371,7 @@ describe("GreenhouseNode integration", () => {
     nodes.sensor_2.send("sensor_1",
       compound("calibration", [atom("sensor_1"), atom("temperature"), num(5)]));
 
-    eq(nodes.sensor_1._signalLog[0].action, "ignore");
+    eq(nodes.sensor_1._signalLog[0].accepted, false);
   });
 });
 
@@ -369,20 +381,18 @@ describe("Estimator VPD computation", () => {
   it("computes VPD when both temp and humidity arrive", () => {
     const { nodes } = fullMesh();
     const est = nodes.estimator;
-    setNodeStatus(est.engine, PrologEngine, "sensor_1", "online");
+    est.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
     est.reactive.bump();
 
     // Send temperature
     nodes.sensor_1.send("estimator",
       compound("reading", [atom("sensor_1"), atom("temperature"), num(25), num(1000)]));
-    // No estimate yet (missing humidity)
     let vpd = est.queryFirst(compound("estimate", [atom("vpd"), atom("sensor_1"), variable("V"), variable("C"), variable("T")]));
     eq(vpd, null, "no VPD with only temperature");
 
     // Send humidity
     nodes.sensor_1.send("estimator",
       compound("reading", [atom("sensor_1"), atom("humidity"), num(60), num(1001)]));
-    // Now VPD should be computed
     vpd = est.queryFirst(compound("estimate", [atom("vpd"), atom("sensor_1"), variable("V"), variable("C"), variable("T")]));
     assert(vpd !== null, "VPD should be computed");
     assert(vpd.args[2].value > 0, "VPD should be positive");
@@ -392,7 +402,7 @@ describe("Estimator VPD computation", () => {
     const { nodes } = fullMesh();
     const est = nodes.estimator;
     const coord = nodes.coordinator;
-    setNodeStatus(est.engine, PrologEngine, "sensor_1", "online");
+    est.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
     est.reactive.bump();
 
     nodes.sensor_1.send("estimator",
@@ -400,7 +410,6 @@ describe("Estimator VPD computation", () => {
     nodes.sensor_1.send("estimator",
       compound("reading", [atom("sensor_1"), atom("humidity"), num(60), num(1001)]));
 
-    // Coordinator should have received the estimate
     const r = coord.queryFirst(
       compound("estimate", [atom("vpd"), atom("sensor_1"), variable("V"), variable("C"), variable("T")]));
     assert(r !== null, "coordinator should have VPD estimate");
@@ -409,7 +418,7 @@ describe("Estimator VPD computation", () => {
   it("updates VPD when new readings arrive", () => {
     const { nodes } = fullMesh();
     const est = nodes.estimator;
-    setNodeStatus(est.engine, PrologEngine, "sensor_1", "online");
+    est.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
     est.reactive.bump();
 
     // First pair
@@ -430,13 +439,113 @@ describe("Estimator VPD computation", () => {
   });
 });
 
+// ── send/2 integration ──────────────────────────────────────
+
+describe("send/2 integration", () => {
+  it("coordinator forwards estimate to gateway via send/2", () => {
+    const e = buildReactiveKB("coordinator", "coordinator");
+    const fact = compound("estimate", [atom("vpd"), atom("s1"), num(80), num(100), num(1000)]);
+    const result = e.queryWithSends(compound("handle_signal", [atom("estimator"), fact]));
+    assert(result.result !== null, "should accept estimate");
+    eq(result.sends.length, 1, "should have one send");
+    eq(result.sends[0].target.name, "gateway");
+    eq(result.sends[0].fact.functor, "estimate");
+  });
+
+  it("coordinator produces no sends for normal reading", () => {
+    const e = buildReactiveKB("coordinator", "coordinator");
+    e.addClause(compound("node_status", [atom("s1"), atom("online")]));
+    const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
+    const result = e.queryWithSends(compound("handle_signal", [atom("s1"), fact]));
+    assert(result.result !== null, "should accept reading");
+    eq(result.sends.length, 0, "no sends for a normal reading");
+  });
+
+  it("coordinator auto-sends alert_notice to gateway on high reading", () => {
+    const e = buildReactiveKB("coordinator", "coordinator");
+    e.addClause(compound("node_status", [atom("s1"), atom("online")]));
+    const fact = compound("reading", [atom("s1"), atom("temperature"), num(50), num(1000)]);
+    const result = e.queryWithSends(compound("handle_signal", [atom("s1"), fact]));
+    assert(result.result !== null, "should accept reading");
+    eq(result.sends.length, 1, "should send alert_notice");
+    eq(result.sends[0].target.name, "gateway");
+    eq(result.sends[0].fact.functor, "alert_notice");
+    eq(result.sends[0].fact.args[2].name, "high");
+  });
+
+  it("estimator sends VPD estimate via send/2", () => {
+    const e = buildReactiveKB("estimator", "estimator");
+    e.addClause(compound("node_status", [atom("s1"), atom("online")]));
+    // Send temperature first
+    e.queryFirst(compound("handle_signal", [
+      atom("s1"),
+      compound("reading", [atom("s1"), atom("temperature"), num(25), num(1000)])
+    ]));
+    // Send humidity — should trigger VPD computation + send
+    const result = e.queryWithSends(compound("handle_signal", [
+      atom("s1"),
+      compound("reading", [atom("s1"), atom("humidity"), num(60), num(1001)])
+    ]));
+    assert(result.result !== null, "should accept humidity reading");
+    eq(result.sends.length, 1, "should send VPD estimate");
+    eq(result.sends[0].target.name, "coordinator");
+    eq(result.sends[0].fact.functor, "estimate");
+    eq(result.sends[0].fact.args[0].name, "vpd");
+  });
+
+  it("estimator produces no send with only temperature", () => {
+    const e = buildReactiveKB("estimator", "estimator");
+    e.addClause(compound("node_status", [atom("s1"), atom("online")]));
+    const result = e.queryWithSends(compound("handle_signal", [
+      atom("s1"),
+      compound("reading", [atom("s1"), atom("temperature"), num(25), num(1000)])
+    ]));
+    assert(result.result !== null, "should accept reading");
+    eq(result.sends.length, 0, "no sends without both readings");
+  });
+
+  it("dropped signal produces no sends", () => {
+    const e = buildReactiveKB("coordinator", "coordinator");
+    const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
+    const result = e.queryWithSends(compound("handle_signal", [atom("s1"), fact]));
+    eq(result.result, null, "should reject (sensor not online)");
+    eq(result.sends.length, 0);
+  });
+
+  it("full mesh: estimator VPD flows through coordinator to gateway", () => {
+    const { nodes } = fullMesh();
+    const est = nodes.estimator;
+    const coord = nodes.coordinator;
+    const gw = nodes.gateway;
+
+    // Register sensor on both estimator and coordinator
+    est.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
+    est.reactive.bump();
+    coord.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
+    coord.reactive.bump();
+
+    // Sensor sends readings to estimator
+    nodes.sensor_1.send("estimator",
+      compound("reading", [atom("sensor_1"), atom("temperature"), num(25), num(1000)]));
+    nodes.sensor_1.send("estimator",
+      compound("reading", [atom("sensor_1"), atom("humidity"), num(60), num(1001)]));
+
+    // Estimator computes VPD and sends to coordinator (via send/2)
+    // Coordinator receives estimate and forwards to gateway (via send/2)
+    const gwEstimate = gw.queryFirst(
+      compound("estimate", [atom("vpd"), atom("sensor_1"), variable("V"), variable("C"), variable("T")]));
+    assert(gwEstimate !== null, "gateway should have VPD estimate via send/2 chain");
+    assert(gwEstimate.args[2].value > 0, "VPD should be positive");
+  });
+});
+
 // ── Reactive integration ────────────────────────────────────
 
 describe("Reactive integration", () => {
   it("alert memo recomputes when reading arrives", () => {
     const { nodes } = fullMesh();
     const coord = nodes.coordinator;
-    setNodeStatus(coord.engine, PrologEngine, "sensor_1", "online");
+    coord.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
     coord.reactive.bump();
 
     const alerts = coord.reactive.createQuery(() =>
@@ -452,7 +561,7 @@ describe("Reactive integration", () => {
   it("mesh_status transitions normal → critical", () => {
     const { nodes } = fullMesh();
     const coord = nodes.coordinator;
-    setNodeStatus(coord.engine, PrologEngine, "sensor_1", "online");
+    coord.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
     coord.reactive.bump();
 
     const status = coord.reactive.createQueryFirst(() =>
@@ -509,21 +618,17 @@ describe("End-to-end scenario", () => {
     assert(estimate !== null, "coordinator should have VPD estimate");
 
     // 4. Sensor sends direct readings to coordinator too
+    //    High temperature triggers check_alerts → send(gateway, alert_notice(...))
     nodes.sensor_1.send("coordinator",
       compound("reading", [atom("sensor_1"), atom("temperature"), num(45), num(200)]));
 
     const status = coord.queryFirst(compound("mesh_status", [variable("S")]));
     eq(status.args[0].name, "critical");
 
-    // 5. Coordinator pushes alert_notice to gateway
-    const alert = coord.queryFirst(compound("alert", [variable("N"), variable("T"), variable("L")]));
-    coord.send("gateway",
-      compound("alert_notice", [atom(alert.args[0].name), atom(alert.args[1].name), atom(alert.args[2].name)]));
-
-    // 6. Gateway has the alert notice
+    // 5. Alert notice auto-forwarded to gateway via check_alerts/send/2
     const gwAlert = gw.queryFirst(
       compound("alert_notice", [variable("N"), variable("T"), variable("L")]));
-    assert(gwAlert !== null, "gateway should have alert notice");
+    assert(gwAlert !== null, "gateway should have alert notice via send/2");
     eq(gwAlert.args[2].name, "high");
   });
 
@@ -537,8 +642,9 @@ describe("End-to-end scenario", () => {
       compound("reading", [atom("sensor_1"), atom("temperature"), num(22), num(100)]));
     assert(coord.queryFirst(compound("reading", [atom("sensor_1"), variable("T"), variable("V"), variable("Ts")])) !== null);
 
-    // Go offline
-    setNodeStatus(coord.engine, PrologEngine, "sensor_1", "offline");
+    // Go offline (direct engine manipulation for test setup)
+    coord.engine.retractFirst(compound("node_status", [atom("sensor_1"), variable("S")]));
+    coord.engine.addClause(compound("node_status", [atom("sensor_1"), atom("offline")]));
     coord.reactive.bump();
 
     // New reading rejected
@@ -552,34 +658,33 @@ describe("End-to-end scenario", () => {
   it("threshold update propagates to sensors", () => {
     const { nodes } = fullMesh();
 
-    // Coordinator pushes new threshold to both sensors
     nodes.coordinator.send("sensor_1",
       compound("threshold", [atom("temperature"), num(0), num(50)]));
     nodes.coordinator.send("sensor_2",
       compound("threshold", [atom("temperature"), num(0), num(50)]));
 
-    eq(nodes.sensor_1._signalLog[0].action, "assert");
-    eq(nodes.sensor_2._signalLog[0].action, "assert");
+    eq(nodes.sensor_1._signalLog[0].accepted, true);
+    eq(nodes.sensor_2._signalLog[0].accepted, true);
   });
 
   it("signal log tracks all decisions", () => {
     const { nodes } = fullMesh();
     const coord = nodes.coordinator;
 
-    // Unknown sensor → ignore
+    // Unknown sensor → dropped
     nodes.sensor_1.send("coordinator",
       compound("reading", [atom("sensor_1"), atom("temperature"), num(22), num(100)]));
-    eq(coord._signalLog[0].action, "ignore");
+    eq(coord._signalLog[0].accepted, false);
 
-    // Register → accept
+    // Register → accepted
     nodes.sensor_1.send("coordinator",
       compound("node_status", [atom("sensor_1"), atom("online")]));
-    eq(coord._signalLog[1].action, "assert");
+    eq(coord._signalLog[1].accepted, true);
 
     // Now reading accepted
     nodes.sensor_1.send("coordinator",
       compound("reading", [atom("sensor_1"), atom("temperature"), num(22), num(100)]));
-    eq(coord._signalLog[2].action, "assert");
+    eq(coord._signalLog[2].accepted, true);
 
     eq(coord._signalLog.length, 3);
   });

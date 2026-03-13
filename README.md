@@ -1,4 +1,6 @@
-# embedded-prolog
+# Y@ — Wyatt Ephemeral Reactive Prolog
+
+🤠 *Y'all — lasso your facts, corral your signals.*
 
 A Prolog inference engine with reactive bindings for embedded
 systems, web apps, and everything in between.
@@ -6,7 +8,7 @@ systems, web apps, and everything in between.
 Python.  JavaScript.  C.  Same engine, same API, same tests.
 
 ```
-./test.sh          # 114 tests: 19 C + 45 Python + 50 JavaScript
+./test.sh          # 410 tests: 19 C + 45 Python + 346 JavaScript
 ```
 
 Zero dependencies.  No package managers.  No build tools.
@@ -34,12 +36,19 @@ src/
   reactive.js             JavaScript signals/memos/effects
   reactive-prolog.js      JavaScript reactive-query bridge
 
+  parser.js               Prolog text parser (94 tests)
+  loader.js               loadString / loadFile
+  sync.js                 Term serialization + fact sync
+  sync-client.js          Offline-capable sync client
+  tracer.js               Query execution tracer
+
 native/
   prolog_core.h           C native acceleration header
   prolog_core.c           C implementation (~270 lines)
   test_core.c             C test suite (19 tests)
 
 examples/
+  tutorial/               Progressive tutorial — 9 steps (30 tests)
   vending/                Vending machine controller
     vending.py + test.py      Python: 17 tests
     vending-kb.js + test.js   JavaScript: 22 tests
@@ -47,10 +56,12 @@ examples/
     router.py + test.py       Python: 28 tests
   margin/                 Margin trading triggers
     margin-kb.js + test.js    JavaScript: 28 tests (QuickJS BigDecimal)
-  form/
-    index.html            SolidJS form validator (browser)
-  tictactoe/              (tic-tac-toe demo)
-  adventure/              (text adventure demo)
+  nng-mesh/               IoT sensor mesh (40 tests)
+  greenhouse/             Multi-runtime IoT — C + JS + Python (49 tests)
+  sync-todo/              Collaborative todos over WebSocket (33 tests)
+  form/                   SolidJS form validator (browser)
+  tictactoe/              Tic-tac-toe with Prolog AI (browser)
+  adventure/              Text adventure — world as Prolog facts (browser)
 
 test.sh                   Runs everything
 ```
@@ -132,13 +143,34 @@ results = e.query(compound("parent", [atom("tom"), var("X")]))
 
 ```javascript
 import { PrologEngine } from './src/prolog-engine.js';
-const { atom, variable, compound, num } = PrologEngine;
+var atom = PrologEngine.atom, compound = PrologEngine.compound;
+var variable = PrologEngine.variable, num = PrologEngine.num;
 
-const e = new PrologEngine();
+var e = new PrologEngine();
 e.addClause(compound("parent", [atom("tom"), atom("bob")]));
 e.addClause(compound("parent", [atom("tom"), atom("liz")]));
 
-const results = e.query(compound("parent", [atom("tom"), variable("X")]));
+var results = e.query(compound("parent", [atom("tom"), variable("X")]));
+```
+
+### With the text parser
+
+Write standard Prolog syntax and load it with `loadString`:
+
+```javascript
+import { PrologEngine } from './src/prolog-engine.js';
+import { loadString } from './src/loader.js';
+
+var e = new PrologEngine();
+loadString(e, `
+  parent(tom, bob).
+  parent(tom, liz).
+  grandparent(X, Z) :- parent(X, Y), parent(Y, Z).
+`);
+
+var results = e.query(
+  PrologEngine.compound("grandparent", [PrologEngine.variable("X"), PrologEngine.atom("liz")])
+);
 ```
 
 ### With reactivity
@@ -153,28 +185,141 @@ display = rp.query_first(lambda: compound("display_message", [var("M")]))
 # When you call rp.bump() after changing facts, it recomputes.
 ```
 
+### Ephemeral/react signal handling
+
+`ephemeral/1` is a scoped assertion: it asserts a fact, solves
+the continuation, then automatically retracts it.  Combined
+with user-defined `react` rules, this gives a clean pattern
+for accepting or dropping external signals:
+
+```prolog
+handle_signal(From, Fact) :- ephemeral(signal(From, Fact)), react.
+
+% Accept temperature readings from trusted sensors,
+% then forward to dashboard via send/2
+react :- signal(From, temperature(From, Room, Val)),
+         trusted_sensor(From),
+         retractall(temperature(Room, _)),
+         assert(temperature(Room, Val)),
+         send(dashboard, temperature(Room, Val)).
+
+% No catch-all — unmatched signals are dropped
+```
+
+Spoofing protection comes for free: `signal(From, temperature(From, ...))`
+forces the transport-tagged sender to match the fact's claimed origin
+via Prolog unification.
+
+`send/2` is a side-effect builtin (like `write/1`) that captures
+`(target, fact)` pairs into a buffer during query execution.  Use
+`engine.queryWithSends(goal)` to run the query and collect all sends:
+
+```javascript
+var result = engine.queryWithSends(
+  compound("handle_signal", [atom("sensor_1"), fact])
+);
+// result.result  — query result (null if dropped)
+// result.sends   — [{target, fact}, ...] from send/2 calls
+// result.output  — output from write/1 calls
+```
+
+React rules express the complete response — what to store AND what to
+send — so the host only needs to dispatch the accumulated messages.
+
 ## Examples
+
+### Tutorial (JS)
+
+Nine progressive steps from facts to reactive signals, using a
+smart thermostat theme.  Start here.
+
+```
+node examples/tutorial/01-facts.js     # run any step individually
+node examples/tutorial/test.js         # 30 tests
+```
 
 ### Vending machine (Python + JS)
 
-The full showcase.  12 sensors, 6 product slots, fault detection,
-fault-specific responses, context-sensitive display messages,
-per-slot motor fault isolation, credit handling, diagnostic queries.
+12 sensors, 6 product slots, fault detection, credit handling,
+context-sensitive display messages.
 
 ```
 python examples/vending/test.py     # 17 tests
 node examples/vending/test.js       # 22 tests
 ```
 
+### IoT message router (Python)
+
+Failover routing across 4 channels (WiFi, Cellular, LoRa, BLE)
+with battery-aware backoff.  ~72 states, ~25 Prolog clauses.
+
+```
+python examples/router/test.py      # 28 tests
+```
+
+### Margin trading (JS)
+
+Position tracking, P&L, margin ratio thresholds, trigger
+conditions.  QuickJS BigDecimal support for precise decimals.
+
+```
+node examples/margin/test.js        # 28 tests
+```
+
 ### Form validator (browser)
 
-A SolidJS signup form where every field is validated by Prolog
-in real-time.  Password strength meter, country-dependent zip
-code formats, contextual hints that update as you type, gentle
-shake animations on invalid fields.
+SolidJS signup form with Prolog-powered real-time validation.
+Password strength, cross-field dependencies, contextual hints.
 
 ```
 open examples/form/index.html
+```
+
+### Tic-tac-toe (browser)
+
+Human vs. AI where the AI strategy is entirely Prolog rules:
+win → block → center → corners.
+
+```
+open examples/tictactoe/tictactoe.html
+```
+
+### Text adventure (browser)
+
+"The Obsidian Tower" — rooms, items, NPCs, inventory, dialogue,
+all modeled as Prolog facts and rules.
+
+```
+open examples/adventure/adventure.html
+```
+
+### Sync todos (JS)
+
+Collaborative todo list with WebSocket fact synchronization.
+Shared Prolog rules on server and client, SolidJS reactive UI.
+
+```
+node examples/sync-todo/test.js     # 33 tests
+```
+
+### NNG sensor mesh (JS)
+
+IoT sensor mesh with signal policy layer, spoofing protection
+via unification, and reactive aggregation.
+
+```
+node examples/nng-mesh/test.js      # 40 tests
+```
+
+### Greenhouse (C + JS + Python, Docker)
+
+Multi-runtime IoT greenhouse: C sensor, JS estimator + dashboard,
+Python gateway.  UDP mesh, VPD estimation, reactive alerts,
+ephemeral/react signal policy across all nodes.
+
+```
+node examples/greenhouse/test.js    # 49 tests (no Docker needed)
+cd examples/greenhouse && docker compose up --build   # full mesh
 ```
 
 ## C native acceleration

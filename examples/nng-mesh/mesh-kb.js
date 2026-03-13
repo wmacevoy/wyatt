@@ -1,7 +1,7 @@
 // ============================================================
 // mesh-kb.js — Prolog rules for IoT sensor mesh
 //
-// Signal policy + alert detection + aggregation, all in Prolog.
+// Signal policy via ephemeral/react pattern + alert detection.
 // ============================================================
 
 import { loadString } from "../../src/loader.js";
@@ -11,29 +11,49 @@ const MESH_RULES = `
 threshold(temperature, 0, 45).
 threshold(humidity, 10, 90).
 
-% ── Signal policy: on_signal(From, Fact, Action) ─────────
-%
-% A signal is just a notification. The policy decides whether
-% to assert, retract, or ignore it. No clause match = ignore.
+% ── Signal handling ──────────────────────────────────────
+% handle_signal/2 — entry point from JS.
+% Asserts signal(From, Fact) ephemerally, then runs react.
+% If no react clause matches, the signal is silently dropped.
+handle_signal(From, Fact) :- ephemeral(signal(From, Fact)), react.
 
-% Coordinator accepts readings from online sensor nodes
-on_signal(From, reading(From, Type, Val, Ts), assert) :-
-    node_id(coordinator),
-    node_status(From, online).
+% ── React rules ──────────────────────────────────────────
+% Pattern-match on signal/2 and upsert permanent facts.
+% Spoofing protection: signal(From, reading(From, ...))
+% requires the transport-tagged sender to match the fact.
+
+% Coordinator accepts readings from online sensors
+react :- signal(From, reading(From, Type, Val, Ts)),
+         node_id(coordinator),
+         node_status(From, online),
+         retractall(reading(From, Type, A, B)),
+         assert(reading(From, Type, Val, Ts)),
+         check_alerts(From, Type).
+
+check_alerts(Node, Type) :-
+    alert(Node, Type, Level),
+    send(gateway, alert_notice(Node, Type, Level)).
+check_alerts(A, B).
 
 % Coordinator accepts node_status from anyone
-on_signal(From, node_status(From, Status), assert) :-
-    node_id(coordinator).
+react :- signal(From, node_status(From, Status)),
+         node_id(coordinator),
+         retractall(node_status(From, A)),
+         assert(node_status(From, Status)).
 
 % Sensor nodes accept threshold updates from coordinator
-on_signal(coordinator, threshold(Type, Min, Max), assert) :-
-    not(node_id(coordinator)).
+react :- signal(coordinator, threshold(Type, Min, Max)),
+         not(node_id(coordinator)),
+         retractall(threshold(Type, A, B)),
+         assert(threshold(Type, Min, Max)).
 
-% Sensor nodes accept retract of threshold from coordinator
-on_signal(coordinator, threshold(Type, Min, Max), retract) :-
-    not(node_id(coordinator)).
+% Any node accepts alert_notice from coordinator
+react :- signal(coordinator, alert_notice(Node, Type, Level)),
+         not(node_id(coordinator)),
+         retractall(alert_notice(Node, Type, A)),
+         assert(alert_notice(Node, Type, Level)).
 
-% Everything else: ignored (no matching clause)
+% No catch-all — unmatched signals are dropped (query fails)
 
 % ── Alert detection ──────────────────────────────────────
 alert(Node, temperature, high) :-
@@ -99,31 +119,4 @@ export function buildMeshKB(PrologEngine, nodeId) {
   };
 
   return engine;
-}
-
-// ── Helpers: update dynamic facts ───────────────────────────
-
-/** Replace reading for a given node+type (upsert). */
-export function updateReading(engine, PrologEngine, nodeId, sensorType, value, timestamp) {
-  const { atom, compound, variable, num } = PrologEngine;
-
-  // Retract any existing reading for this node+type
-  engine.retractFirst(compound("reading", [atom(nodeId), atom(sensorType), variable("_V"), variable("_T")]));
-
-  // Assert new reading
-  engine.addClause(compound("reading", [atom(nodeId), atom(sensorType), num(value), num(timestamp)]));
-}
-
-/** Set node status (upsert). */
-export function setNodeStatus(engine, PrologEngine, nodeId, status) {
-  const { atom, compound, variable } = PrologEngine;
-  engine.retractFirst(compound("node_status", [atom(nodeId), variable("_")]));
-  engine.addClause(compound("node_status", [atom(nodeId), atom(status)]));
-}
-
-/** Update threshold (upsert). */
-export function updateThreshold(engine, PrologEngine, sensorType, min, max) {
-  const { atom, compound, variable, num } = PrologEngine;
-  engine.retractFirst(compound("threshold", [atom(sensorType), variable("_Min"), variable("_Max")]));
-  engine.addClause(compound("threshold", [atom(sensorType), num(min), num(max)]));
 }
