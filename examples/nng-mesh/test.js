@@ -6,11 +6,12 @@
 // ============================================================
 
 import { PrologEngine, termToString, listToArray } from "../../src/prolog-engine.js";
+import { loadString } from "../../src/loader.js";
 import { serialize, deserialize, termEq, SyncEngine } from "../../src/sync.js";
 import { createReactiveEngine } from "../../src/reactive-prolog.js";
 import { createSignal, createMemo, createEffect } from "../../src/reactive.js";
 import { SimBus } from "./transport.js";
-import { buildMeshKB, updateReading, setNodeStatus, updateThreshold } from "./mesh-kb.js";
+import { buildMeshKB } from "./mesh-kb.js";
 import { MeshNode } from "./node.js";
 
 const { atom, variable, compound, num } = PrologEngine;
@@ -36,6 +37,14 @@ function createMesh(nodeIds) {
     nodes[id] = new MeshNode({ id, transport });
   }
   return { bus, nodes };
+}
+
+// ── Helper: build a reactive engine for policy tests ────────
+
+function buildReactiveKB(nodeId) {
+  const engine = buildMeshKB(PrologEngine, nodeId);
+  createReactiveEngine(engine); // registers ephemeral/1
+  return engine;
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -163,55 +172,63 @@ describe("Mesh KB rules", () => {
   });
 });
 
-// ── Signal policy ───────────────────────────────────────────
+// ── Signal policy (via handle_signal/2) ─────────────────────
 
 describe("Signal policy", () => {
   it("coordinator accepts reading from online sensor", () => {
-    const e = buildMeshKB(PrologEngine, "coordinator");
-    setNodeStatus(e, PrologEngine, "s1", "online");
+    const e = buildReactiveKB("coordinator");
+    e.addClause(compound("node_status", [atom("s1"), atom("online")]));
     const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
-    const r = e.queryFirst(compound("on_signal", [atom("s1"), fact, variable("A")]));
-    assert(r !== null);
-    eq(r.args[2].name, "assert");
+    const r = e.queryFirst(compound("handle_signal", [atom("s1"), fact]));
+    assert(r !== null, "handle_signal should succeed");
+    // Verify the reading was upserted
+    const reading = e.queryFirst(compound("reading", [atom("s1"), atom("temperature"), variable("V"), variable("T")]));
+    assert(reading !== null);
+    eq(reading.args[2].value, 22);
   });
 
   it("coordinator rejects reading from unknown sensor", () => {
-    const e = buildMeshKB(PrologEngine, "coordinator");
-    // s1 has no node_status — not known
+    const e = buildReactiveKB("coordinator");
     const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
-    const r = e.queryFirst(compound("on_signal", [atom("s1"), fact, variable("A")]));
-    eq(r, null, "no policy match → ignored");
+    const r = e.queryFirst(compound("handle_signal", [atom("s1"), fact]));
+    eq(r, null, "no react match → signal dropped");
   });
 
   it("coordinator rejects reading where From doesn't match node in fact", () => {
-    const e = buildMeshKB(PrologEngine, "coordinator");
-    setNodeStatus(e, PrologEngine, "s1", "online");
+    const e = buildReactiveKB("coordinator");
+    e.addClause(compound("node_status", [atom("s1"), atom("online")]));
     // Spoofed: signal from "s2" but fact says "s1"
     const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
-    const r = e.queryFirst(compound("on_signal", [atom("s2"), fact, variable("A")]));
+    const r = e.queryFirst(compound("handle_signal", [atom("s2"), fact]));
     eq(r, null, "From must match reading node");
   });
 
   it("coordinator accepts node_status from any node", () => {
-    const e = buildMeshKB(PrologEngine, "coordinator");
+    const e = buildReactiveKB("coordinator");
     const fact = compound("node_status", [atom("new_sensor"), atom("online")]);
-    const r = e.queryFirst(compound("on_signal", [atom("new_sensor"), fact, variable("A")]));
-    assert(r !== null);
-    eq(r.args[2].name, "assert");
+    const r = e.queryFirst(compound("handle_signal", [atom("new_sensor"), fact]));
+    assert(r !== null, "should accept node_status");
+    // Verify upserted
+    const status = e.queryFirst(compound("node_status", [atom("new_sensor"), variable("S")]));
+    assert(status !== null);
+    eq(status.args[1].name, "online");
   });
 
   it("sensor node accepts threshold from coordinator", () => {
-    const e = buildMeshKB(PrologEngine, "sensor_1");
+    const e = buildReactiveKB("sensor_1");
     const fact = compound("threshold", [atom("temperature"), num(5), num(40)]);
-    const r = e.queryFirst(compound("on_signal", [atom("coordinator"), fact, variable("A")]));
-    assert(r !== null);
-    eq(r.args[2].name, "assert");
+    const r = e.queryFirst(compound("handle_signal", [atom("coordinator"), fact]));
+    assert(r !== null, "should accept threshold");
+    // Verify upserted (replaces default)
+    const th = e.queryFirst(compound("threshold", [atom("temperature"), variable("Min"), variable("Max")]));
+    eq(th.args[1].value, 5);
+    eq(th.args[2].value, 40);
   });
 
   it("sensor node ignores reading signals", () => {
-    const e = buildMeshKB(PrologEngine, "sensor_1");
+    const e = buildReactiveKB("sensor_1");
     const fact = compound("reading", [atom("s2"), atom("temperature"), num(22), num(1000)]);
-    const r = e.queryFirst(compound("on_signal", [atom("s2"), fact, variable("A")]));
+    const r = e.queryFirst(compound("handle_signal", [atom("s2"), fact]));
     eq(r, null, "sensor nodes don't accept readings");
   });
 });
@@ -225,7 +242,7 @@ describe("MeshNode integration", () => {
     const sensor = nodes.sensor_1;
 
     // Register sensor as online on coordinator
-    setNodeStatus(coord.engine, PrologEngine, "sensor_1", "online");
+    coord.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
     coord.reactive.bump();
 
     // Sensor sends reading
@@ -247,14 +264,14 @@ describe("MeshNode integration", () => {
 
     const r = coord.queryFirst(compound("reading", [atom("rogue"), variable("T"), variable("V"), variable("Ts")]));
     eq(r, null, "should be rejected by policy");
-    eq(coord._signalLog[0].action, "ignore");
+    eq(coord._signalLog[0].accepted, false);
   });
 
   it("coordinator detects alert from received reading", () => {
     const { nodes } = createMesh(["coordinator", "sensor_1"]);
     const coord = nodes.coordinator;
 
-    setNodeStatus(coord.engine, PrologEngine, "sensor_1", "online");
+    coord.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
     coord.reactive.bump();
 
     // Send a dangerously high temperature
@@ -270,8 +287,8 @@ describe("MeshNode integration", () => {
     const { nodes } = createMesh(["coordinator", "s1", "s2"]);
     const coord = nodes.coordinator;
 
-    setNodeStatus(coord.engine, PrologEngine, "s1", "online");
-    setNodeStatus(coord.engine, PrologEngine, "s2", "online");
+    coord.engine.addClause(compound("node_status", [atom("s1"), atom("online")]));
+    coord.engine.addClause(compound("node_status", [atom("s2"), atom("online")]));
     coord.reactive.bump();
 
     nodes.s1.send("coordinator", compound("reading", [atom("s1"), atom("temperature"), num(20), num(100)]));
@@ -285,7 +302,7 @@ describe("MeshNode integration", () => {
     const { nodes } = createMesh(["coordinator", "s1"]);
     const coord = nodes.coordinator;
 
-    setNodeStatus(coord.engine, PrologEngine, "s1", "online");
+    coord.engine.addClause(compound("node_status", [atom("s1"), atom("online")]));
     coord.reactive.bump();
 
     nodes.s1.send("coordinator", compound("reading", [atom("s1"), atom("temperature"), num(20), num(100)]));
@@ -304,16 +321,14 @@ describe("MeshNode integration", () => {
     nodes.coordinator.send("s1", newThreshold);
     nodes.coordinator.send("s2", newThreshold);
 
-    // Both sensors should have updated threshold
+    // Both sensors should have accepted the threshold
     for (const id of ["s1", "s2"]) {
+      eq(nodes[id]._signalLog[0].accepted, true);
+      // Verify upserted
       const r = nodes[id].queryFirst(compound("threshold", [atom("temperature"), variable("Min"), variable("Max")]));
       assert(r !== null, `${id} should have threshold`);
-      // SyncEngine assertFact adds without removing old — check that the new one is queryable
-      // The sync.assertFact will add a second clause, so query returns the original first.
-      // For a proper upsert, we'd need the updateThreshold helper.
-      // But the signal policy triggers assertFact, which adds the clause.
-      // For this test, just verify the signal was accepted.
-      eq(nodes[id]._signalLog[0].action, "assert");
+      eq(r.args[1].value, 5);
+      eq(r.args[2].value, 40);
     }
   });
 
@@ -338,17 +353,89 @@ describe("MeshNode integration", () => {
     const { nodes } = createMesh(["coordinator", "s1", "evil"]);
     const coord = nodes.coordinator;
 
-    setNodeStatus(coord.engine, PrologEngine, "s1", "online");
+    coord.engine.addClause(compound("node_status", [atom("s1"), atom("online")]));
     coord.reactive.bump();
 
     // evil sends a reading claiming to be from s1
-    // But the transport tags it as from "evil", and on_signal(evil, reading(s1,...), Action) won't match
-    // because on_signal requires From == node in reading
     nodes.evil.send("coordinator", compound("reading", [atom("s1"), atom("temperature"), num(99), num(1000)]));
 
     const r = coord.queryFirst(compound("reading", [atom("s1"), variable("T"), variable("V"), variable("Ts")]));
     eq(r, null, "spoofed reading should be rejected");
-    eq(coord._signalLog[0].action, "ignore");
+    eq(coord._signalLog[0].accepted, false);
+  });
+});
+
+// ── send/2 builtin ──────────────────────────────────────────
+
+describe("send/2 builtin", () => {
+  it("coordinator auto-sends alert_notice on high reading", () => {
+    const e = buildReactiveKB("coordinator");
+    e.addClause(compound("node_status", [atom("s1"), atom("online")]));
+    const fact = compound("reading", [atom("s1"), atom("temperature"), num(50), num(1000)]);
+    var result = e.queryWithSends(compound("handle_signal", [atom("s1"), fact]));
+    assert(result.result !== null, "should accept reading");
+    eq(result.sends.length, 1, "should send alert_notice");
+    eq(result.sends[0].target.name, "gateway");
+    eq(result.sends[0].fact.functor, "alert_notice");
+  });
+
+  it("coordinator produces no sends for normal reading", () => {
+    const e = buildReactiveKB("coordinator");
+    e.addClause(compound("node_status", [atom("s1"), atom("online")]));
+    const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
+    var result = e.queryWithSends(compound("handle_signal", [atom("s1"), fact]));
+    assert(result.result !== null, "should accept reading");
+    eq(result.sends.length, 0, "no sends for normal reading");
+  });
+
+  it("alert flows to gateway node via send/2", () => {
+    const { nodes } = createMesh(["coordinator", "s1", "gateway"]);
+    const coord = nodes.coordinator;
+    coord.engine.addClause(compound("node_status", [atom("s1"), atom("online")]));
+    coord.reactive.bump();
+
+    nodes.s1.send("coordinator", compound("reading", [atom("s1"), atom("temperature"), num(99), num(1000)]));
+
+    const gwAlert = nodes.gateway.queryFirst(
+      compound("alert_notice", [variable("N"), variable("T"), variable("L")]));
+    assert(gwAlert !== null, "gateway should have alert_notice via send/2");
+    eq(gwAlert.args[2].name, "high");
+  });
+
+  it("send/2 captures messages during query", () => {
+    const e = new PrologEngine();
+    loadString(e, "test :- send(target, hello).");
+    var result = e.queryWithSends(compound("test", []));
+    assert(result.result !== null, "query should succeed");
+    eq(result.sends.length, 1);
+    eq(result.sends[0].target.name, "target");
+    eq(result.sends[0].fact.name, "hello");
+  });
+
+  it("multiple sends accumulate", () => {
+    const e = new PrologEngine();
+    loadString(e, "test :- send(a, msg1), send(b, msg2), send(c, msg3).");
+    var result = e.queryWithSends(compound("test", []));
+    eq(result.sends.length, 3);
+    eq(result.sends[0].target.name, "a");
+    eq(result.sends[1].target.name, "b");
+    eq(result.sends[2].target.name, "c");
+  });
+
+  it("sends are empty when query fails", () => {
+    const e = new PrologEngine();
+    var result = e.queryWithSends(compound("nonexistent", []));
+    eq(result.result, null);
+    eq(result.sends.length, 0);
+  });
+
+  it("queryWithSends clears sends between calls", () => {
+    const e = new PrologEngine();
+    loadString(e, "test :- send(target, hello).");
+    var r1 = e.queryWithSends(compound("test", []));
+    eq(r1.sends.length, 1);
+    var r2 = e.queryWithSends(compound("test", []));
+    eq(r2.sends.length, 1);
   });
 });
 
@@ -359,7 +446,7 @@ describe("Reactive integration", () => {
     const { nodes } = createMesh(["coordinator", "s1"]);
     const coord = nodes.coordinator;
 
-    setNodeStatus(coord.engine, PrologEngine, "s1", "online");
+    coord.engine.addClause(compound("node_status", [atom("s1"), atom("online")]));
     coord.reactive.bump();
 
     // Create reactive alert query
@@ -380,7 +467,7 @@ describe("Reactive integration", () => {
     const { nodes } = createMesh(["coordinator", "s1"]);
     const coord = nodes.coordinator;
 
-    setNodeStatus(coord.engine, PrologEngine, "s1", "online");
+    coord.engine.addClause(compound("node_status", [atom("s1"), atom("online")]));
     coord.reactive.bump();
 
     const status = coord.reactive.createQueryFirst(() =>
@@ -398,7 +485,7 @@ describe("Reactive integration", () => {
     const { nodes } = createMesh(["coordinator", "s1"]);
     const coord = nodes.coordinator;
 
-    setNodeStatus(coord.engine, PrologEngine, "s1", "online");
+    coord.engine.addClause(compound("node_status", [atom("s1"), atom("online")]));
     coord.reactive.bump();
 
     let effectCount = 0;
@@ -458,8 +545,9 @@ describe("End-to-end scenario", () => {
     eq(alert.args[0].name, "s1");
     eq(alert.args[2].name, "high");
 
-    // 4. Coordinator updates threshold to be more lenient
-    updateThreshold(coord.engine, PrologEngine, "temperature", 0, 60);
+    // 4. Update threshold to be more lenient (direct engine manipulation)
+    coord.engine.retractFirst(compound("threshold", [atom("temperature"), variable("A"), variable("B")]));
+    coord.engine.addClause(compound("threshold", [atom("temperature"), num(0), num(60)]));
     coord.reactive.bump();
 
     // Now 50 is within range — no more alert
@@ -476,8 +564,9 @@ describe("End-to-end scenario", () => {
     nodes.s1.send("coordinator", compound("reading", [atom("s1"), atom("temperature"), num(22), num(100)]));
     assert(coord.queryFirst(compound("reading", [atom("s1"), variable("T"), variable("V"), variable("Ts")])) !== null);
 
-    // Node goes offline
-    setNodeStatus(coord.engine, PrologEngine, "s1", "offline");
+    // Node goes offline (direct engine manipulation for test setup)
+    coord.engine.retractFirst(compound("node_status", [atom("s1"), variable("S")]));
+    coord.engine.addClause(compound("node_status", [atom("s1"), atom("offline")]));
     coord.reactive.bump();
 
     // New reading should be rejected (node not online)
@@ -492,17 +581,17 @@ describe("End-to-end scenario", () => {
     const { nodes } = createMesh(["coordinator", "s1"]);
     const coord = nodes.coordinator;
 
-    // Unknown sensor → ignore
+    // Unknown sensor → dropped
     nodes.s1.send("coordinator", compound("reading", [atom("s1"), atom("temperature"), num(22), num(100)]));
-    eq(coord._signalLog[0].action, "ignore");
+    eq(coord._signalLog[0].accepted, false);
 
-    // Register → accept
+    // Register → accepted
     nodes.s1.send("coordinator", compound("node_status", [atom("s1"), atom("online")]));
-    eq(coord._signalLog[1].action, "assert");
+    eq(coord._signalLog[1].accepted, true);
 
     // Now reading accepted
     nodes.s1.send("coordinator", compound("reading", [atom("s1"), atom("temperature"), num(22), num(100)]));
-    eq(coord._signalLog[2].action, "assert");
+    eq(coord._signalLog[2].accepted, true);
 
     eq(coord._signalLog.length, 3);
   });

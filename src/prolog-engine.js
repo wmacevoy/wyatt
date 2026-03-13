@@ -19,6 +19,7 @@ function PrologEngine() {
   this.clauses = [];
   this.builtins = {};
   this._output = [];
+  this._sends = [];
   this._registerBuiltins();
 }
 
@@ -184,6 +185,17 @@ PrologEngine.prototype.queryWithOutput = function(goal) {
   return { result: result, output: output };
 };
 
+PrologEngine.prototype.queryWithSends = function(goal) {
+  this._sends = [];
+  this._output = [];
+  var result = this.queryFirst(goal);
+  var sends = this._sends.slice();
+  var output = this._output.slice();
+  this._sends = [];
+  this._output = [];
+  return { result: result, sends: sends, output: output };
+};
+
 // ── Builtins ──────────────────────────────────────────────────
 
 PrologEngine.prototype._registerBuiltins = function() {
@@ -343,6 +355,12 @@ PrologEngine.prototype._registerBuiltins = function() {
       self.solve(rest, subst, counter, depth + 1, onSolution);
   };
 
+  this.builtins["retractall/1"] = function(goal, rest, subst, counter, depth, onSolution) {
+    var pattern = self.deepWalk(goal.args[0], subst);
+    while (self.retractFirst(pattern)) {}
+    self.solve(rest, subst, counter, depth + 1, onSolution);
+  };
+
   this.builtins["findall/3"] = function(goal, rest, subst, counter, depth, onSolution) {
     var template = goal.args[0];
     var qGoal = self.deepWalk(goal.args[1], subst);
@@ -355,6 +373,13 @@ PrologEngine.prototype._registerBuiltins = function() {
     counter.n = savedN;
     var s = self.unify(bag, PrologEngine.list(results), subst);
     if (s !== null) self.solve(rest, s, counter, depth + 1, onSolution);
+  };
+
+  this.builtins["send/2"] = function(goal, rest, subst, counter, depth, onSolution) {
+    var target = self.deepWalk(goal.args[0], subst);
+    var fact = self.deepWalk(goal.args[1], subst);
+    self._sends.push({ target: target, fact: fact });
+    self.solve(rest, subst, counter, depth + 1, onSolution);
   };
 
   this.builtins["write/1"] = function(goal, rest, subst, counter, depth, onSolution) {

@@ -1,15 +1,14 @@
 // ============================================================
 // node.js — MeshNode: Prolog engine + reactive layer + transport
 //
-// Wires together PrologEngine, SyncEngine, reactive signals,
-// and a transport (SimTransport or real NNG). Incoming signals
-// pass through Prolog policy rules before touching the database.
+// Incoming signals pass through Prolog ephemeral/react rules.
+// If accepted, the react rule upserts facts; otherwise dropped.
 // ============================================================
 
 import { PrologEngine } from "../../src/prolog-engine.js";
-import { serialize, deserialize, termEq, SyncEngine } from "../../src/sync.js";
+import { serialize, deserialize, SyncEngine } from "../../src/sync.js";
 import { createReactiveEngine } from "../../src/reactive-prolog.js";
-import { buildMeshKB, updateReading, setNodeStatus } from "./mesh-kb.js";
+import { buildMeshKB } from "./mesh-kb.js";
 
 const { atom, variable, compound, num } = PrologEngine;
 
@@ -27,7 +26,7 @@ export class MeshNode {
     // Build engine with mesh KB
     const engine = buildMeshKB(PrologEngine, this.id);
 
-    // Wrap in reactive layer
+    // Wrap in reactive layer (registers ephemeral/1 builtin)
     const reactive = createReactiveEngine(engine);
 
     // Create sync engine (bumps reactive generation on fact changes)
@@ -52,44 +51,27 @@ export class MeshNode {
     const fact = deserialize(payload.fact);
     if (!fact) return;
 
-    // Query the policy: on_signal(FromNode, Fact, Action)
-    const goal = compound("on_signal", [atom(fromAddress), fact, variable("Action")]);
-    const result = this.engine.queryFirst(goal);
+    const result = this.engine.queryWithSends(
+      compound("handle_signal", [atom(fromAddress), fact])
+    );
 
-    // Determine action
-    let action = null;
-    if (result) {
-      const actionTerm = result.args[2];
-      if (actionTerm.type === "atom") action = actionTerm.name;
-    }
-
-    // Log the signal (for testing/debugging)
     this._signalLog.push({
       from: fromAddress,
       fact: fact,
-      action: action || "ignore"
+      accepted: result.result !== null
     });
 
-    // Execute action
-    if (action === "assert") {
-      // For reading/4 facts, do upsert (retract old + assert new)
-      if (fact.type === "compound" && fact.functor === "reading" && fact.args.length === 4) {
-        const nodeId = fact.args[0].name;
-        const sensorType = fact.args[1].name;
-        const value = fact.args[2].value;
-        const timestamp = fact.args[3].value;
-        updateReading(this.engine, PrologEngine, nodeId, sensorType, value, timestamp);
-        this.reactive.bump();
-      } else if (fact.type === "compound" && fact.functor === "node_status" && fact.args.length === 2) {
-        setNodeStatus(this.engine, PrologEngine, fact.args[0].name, fact.args[1].name);
-        this.reactive.bump();
-      } else {
-        this.sync.assertFact(fact);
+    if (result.result) {
+      for (var i = 0; i < result.sends.length; i++) {
+        var s = result.sends[i];
+        this.transport.send(s.target.name, {
+          kind: "signal",
+          from: this.id,
+          fact: serialize(s.fact)
+        });
       }
-    } else if (action === "retract") {
-      this.sync.retractFact(fact);
+      this.reactive.bump();
     }
-    // "ignore" or no match → do nothing
   }
 
   // ── Sending ─────────────────────────────────────────────

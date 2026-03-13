@@ -75,6 +75,8 @@ if [ -z "$1" ] || [ "$1" = "js" ]; then
       "$JS examples/nng-mesh/test.js"
     run "JS greenhouse mesh ($JS, 42 tests)" \
       "$JS examples/greenhouse/test.js"
+    run "JS tutorial ($JS, 27 tests)" \
+      "$JS examples/tutorial/test.js"
   else
     echo "  (skipping JS tests — no runtime found)"
   fi

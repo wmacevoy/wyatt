@@ -1,12 +1,9 @@
 // ============================================================
 // estimator/main.js — Greenhouse VPD estimator node
 //
-// Runs under Node.js/Bun in Docker (demonstrating code that
-// would run under QuickJS with BigDecimal in production).
-//
-// Listens on UDP for sensor readings, applies Prolog signal
-// policy, computes VPD via the Magnus formula, and forwards
-// estimates to the coordinator.
+// Listens on UDP for sensor readings, uses Prolog ephemeral/react
+// rules to accept signals, computes VPD via the Magnus formula,
+// and forwards estimates to the coordinator.
 //
 // Env vars:
 //   LISTEN_PORT      — UDP port to bind (default 9500)
@@ -16,6 +13,7 @@
 import dgram from "node:dgram";
 import { PrologEngine } from "../../../src/prolog-engine.js";
 import { loadString } from "../../../src/loader.js";
+import { createReactiveEngine } from "../../../src/reactive-prolog.js";
 import { serialize, deserialize } from "../../../src/sync.js";
 
 var atom     = PrologEngine.atom;
@@ -45,23 +43,50 @@ var coordinator = parseAddr(COORDINATOR_ADDR);
 
 var engine = new PrologEngine();
 
-// Signal policy: which incoming facts we accept.
-// The estimator accepts readings from online sensors and
-// node_status updates from any node.
 var RULES = [
-  "on_signal(From, reading(From, Type, Val, Ts), assert) :-",
-  "    node_role(estimator),",
-  "    node_status(From, online).",
+  "handle_signal(From, Fact) :- ephemeral(signal(From, Fact)), react.",
   "",
-  "on_signal(From, node_status(From, Status), assert) :-",
-  "    node_role(estimator)."
+  "react :- signal(From, reading(From, Type, Val, Ts)),",
+  "         node_role(estimator),",
+  "         node_status(From, online),",
+  "         retractall(reading(From, Type, A, B)),",
+  "         assert(reading(From, Type, Val, Ts)),",
+  "         try_vpd(From, Ts).",
+  "",
+  "try_vpd(Sensor, Ts) :-",
+  "    reading(Sensor, temperature, Temp, A),",
+  "    reading(Sensor, humidity, Hum, B),",
+  "    compute_vpd(Temp, Hum, Vpd),",
+  "    retractall(estimate(vpd, Sensor, X, Y, Z)),",
+  "    assert(estimate(vpd, Sensor, Vpd, 100, Ts)),",
+  "    send(coordinator, estimate(vpd, Sensor, Vpd, 100, Ts)).",
+  "try_vpd(A, B).",
+  "",
+  "react :- signal(From, node_status(From, Status)),",
+  "         node_role(estimator),",
+  "         retractall(node_status(From, A)),",
+  "         assert(node_status(From, Status))."
 ].join("\n");
 
 loadString(engine, RULES);
 
-// Assert this node's identity and role.
 engine.addClause(compound("node_role", [atom("estimator")]));
 engine.addClause(compound("node_id",   [atom("estimator")]));
+
+// Register ephemeral/1 builtin
+createReactiveEngine(engine);
+
+// compute_vpd/3 — Magnus formula for vapor pressure deficit
+engine.builtins["compute_vpd/3"] = function(g, r, s, ctr, d, cb) {
+  var temp = engine.deepWalk(g.args[0], s);
+  var hum = engine.deepWalk(g.args[1], s);
+  if (temp.type !== "num" || hum.type !== "num") return;
+  var es = 0.6108 * Math.exp(17.27 * temp.value / (temp.value + 237.3));
+  var ea = es * hum.value / 100;
+  var vpd = Math.round((es - ea) * 100);
+  var u = engine.unify(g.args[2], PrologEngine.num(vpd), s);
+  if (u !== null) engine.solve(r, u, ctr, d + 1, cb);
+};
 
 // ── UDP transport ───────────────────────────────────────────
 
@@ -87,24 +112,36 @@ sock.on("message", function(msg, rinfo) {
   var fact   = deserialize(payload.fact);
   if (!fact || !fromId) return;
 
-  // Query the signal policy to decide whether to accept this fact.
-  var goal = compound("on_signal", [atom(fromId), fact, variable("Action")]);
-  var result = engine.queryFirst(goal);
+  var result = engine.queryWithSends(
+    compound("handle_signal", [atom(fromId), fact])
+  );
 
-  var action = null;
-  if (result) {
-    var actionTerm = result.args[2];
-    if (actionTerm.type === "atom") action = actionTerm.name;
-  }
-
-  if (action !== "assert") {
-    console.log("[estimator] ignored signal from " + fromId +
+  if (!result.result) {
+    console.log("[estimator] dropped signal from " + fromId +
                 " (" + (fact.functor || fact.name || "?") + ")");
     return;
   }
 
-  // Upsert the fact into the engine.
-  upsertFact(fact, fromId);
+  console.log("[estimator] accepted " + (fact.functor || fact.name) + " from " + fromId);
+
+  // Dispatch all sends from Prolog react rules (e.g. VPD estimates)
+  for (var i = 0; i < result.sends.length; i++) {
+    var s = result.sends[i];
+    var targetName = s.target.name;
+    var targetAddr = parseAddr(targetName === "coordinator" ? COORDINATOR_ADDR : targetName + ":9500");
+    var buf = Buffer.from(JSON.stringify({
+      kind: "signal",
+      from: "estimator",
+      fact: serialize(s.fact)
+    }));
+    sock.send(buf, 0, buf.length, targetAddr.port, targetAddr.host, function(err) {
+      if (err) {
+        console.error("[estimator] failed to send:", err.message);
+      } else {
+        console.log("[estimator] sent " + (s.fact.functor || "fact") + " to " + targetName);
+      }
+    });
+  }
 });
 
 sock.bind(LISTEN_PORT, function() {
@@ -112,115 +149,3 @@ sock.bind(LISTEN_PORT, function() {
   console.log("[estimator] coordinator at " + coordinator.host + ":" + coordinator.port);
 });
 
-// ── Fact upsert ─────────────────────────────────────────────
-//
-// For reading/4 and node_status/2 we retract the old value
-// before asserting the new one, so only the latest is kept.
-
-function upsertFact(fact, fromId) {
-  if (fact.type === "compound" && fact.functor === "reading" && fact.args.length === 4) {
-    var nodeId     = fact.args[0].name;
-    var sensorType = fact.args[1].name;
-    var value      = fact.args[2].value;
-    var timestamp  = fact.args[3].value;
-
-    // Retract old reading for this node+type, then assert new one.
-    engine.retractFirst(compound("reading", [
-      atom(nodeId), atom(sensorType), variable("_V"), variable("_T")
-    ]));
-    engine.addClause(compound("reading", [
-      atom(nodeId), atom(sensorType), num(value), num(timestamp)
-    ]));
-
-    console.log("[estimator] reading: " + nodeId + " " + sensorType +
-                " = " + value + " @ " + timestamp);
-
-    // After upserting a reading, check if we can compute VPD.
-    computeVPD(nodeId, timestamp);
-    return;
-  }
-
-  if (fact.type === "compound" && fact.functor === "node_status" && fact.args.length === 2) {
-    var nid    = fact.args[0].name;
-    var status = fact.args[1].name;
-
-    engine.retractFirst(compound("node_status", [atom(nid), variable("_S")]));
-    engine.addClause(compound("node_status", [atom(nid), atom(status)]));
-
-    console.log("[estimator] node_status: " + nid + " -> " + status);
-    return;
-  }
-
-  // Fallback: plain assert (no upsert).
-  engine.addClause(fact);
-}
-
-// ── VPD computation (Magnus formula) ────────────────────────
-//
-// VPD (Vapor Pressure Deficit) quantifies how far the air is
-// from saturation. It requires both temperature and humidity
-// readings for the same sensor.
-//
-// In QuickJS with BigDecimal:
-//   const es = BigDecimal("0.6108") * BigDecimal.exp(
-//     BigDecimal("17.27") * BigDecimal(temp) / (BigDecimal(temp) + BigDecimal("237.3"))
-//   );
-// IEEE 754 doubles accumulate ~0.001 kPa drift over 24h of readings.
-// BigDecimal eliminates this, critical for VPD-based irrigation decisions.
-
-function computeVPD(sensorId, timestamp) {
-  // Look up the latest temperature reading for this sensor.
-  var tempResult = engine.queryFirst(
-    compound("reading", [atom(sensorId), atom("temperature"), variable("V"), variable("T")])
-  );
-
-  // Look up the latest humidity reading for this sensor.
-  var humResult = engine.queryFirst(
-    compound("reading", [atom(sensorId), atom("humidity"), variable("V"), variable("T")])
-  );
-
-  if (!tempResult || !humResult) {
-    // Need both readings before we can compute VPD.
-    return;
-  }
-
-  var temp     = tempResult.args[2].value;
-  var humidity = humResult.args[2].value;
-
-  // Magnus formula: saturated vapor pressure (kPa)
-  // In production QuickJS, this would use BigDecimal for precision.
-  var es = 0.6108 * Math.exp(17.27 * temp / (temp + 237.3));
-  var ea = es * humidity / 100;
-  var vpd = Math.round((es - ea) * 100);  // centikPa (integer for Prolog)
-
-  console.log("[estimator] VPD for " + sensorId + ": " + vpd +
-              " centikPa (temp=" + temp + ", humidity=" + humidity + ")");
-
-  // Upsert the estimate locally.
-  engine.retractFirst(compound("estimate", [
-    atom("vpd"), atom(sensorId), variable("_V"), variable("_C"), variable("_T")
-  ]));
-  engine.addClause(compound("estimate", [
-    atom("vpd"), atom(sensorId), num(vpd), num(100), num(timestamp)
-  ]));
-
-  // Send the estimate to the coordinator via UDP.
-  var estimateFact = compound("estimate", [
-    atom("vpd"), atom(sensorId), num(vpd), num(100), num(timestamp)
-  ]);
-
-  var payload = {
-    kind: "signal",
-    from: "estimator",
-    fact: serialize(estimateFact)
-  };
-
-  var buf = Buffer.from(JSON.stringify(payload));
-  sock.send(buf, 0, buf.length, coordinator.port, coordinator.host, function(err) {
-    if (err) {
-      console.error("[estimator] failed to send estimate:", err.message);
-    } else {
-      console.log("[estimator] sent VPD estimate to coordinator for " + sensorId);
-    }
-  });
-}

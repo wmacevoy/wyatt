@@ -1,10 +1,8 @@
 // ============================================================
 // dashboard/server.js — Greenhouse coordinator + web dashboard
 //
-// Runs under Bun in Docker. Combines:
-//   1. A Prolog engine with signal policy, alerts, thresholds
-//   2. A UDP listener for mesh signals from sensors/estimator
-//   3. An HTTP server with SSE for the browser dashboard
+// Combines a Prolog engine with ephemeral/react signal policy,
+// a UDP listener for mesh signals, and an HTTP server with SSE.
 //
 // Env vars:
 //   LISTEN_PORT  — UDP port to bind (default 9500)
@@ -18,6 +16,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PrologEngine, listToArray } from "../../../src/prolog-engine.js";
 import { loadString } from "../../../src/loader.js";
+import { createReactiveEngine } from "../../../src/reactive-prolog.js";
 import { serialize, deserialize } from "../../../src/sync.js";
 
 var atom     = PrologEngine.atom;
@@ -58,13 +57,26 @@ var RULES = [
   "threshold(humidity, 20, 85).",
   "threshold(vpd, 40, 160).",
   "",
-  "on_signal(From, reading(From, Type, Val, Ts), assert) :-",
-  "    node_role(coordinator),",
-  "    node_status(From, online).",
-  "on_signal(estimator, estimate(Type, Node, Val, Confidence, Ts), assert) :-",
-  "    node_role(coordinator).",
-  "on_signal(From, node_status(From, Status), assert) :-",
-  "    node_role(coordinator).",
+  "handle_signal(From, Fact) :- ephemeral(signal(From, Fact)), react.",
+  "",
+  "react :- signal(From, reading(From, Type, Val, Ts)),",
+  "         node_role(coordinator),",
+  "         node_status(From, online),",
+  "         retractall(reading(From, Type, A, B)),",
+  "         assert(reading(From, Type, Val, Ts)),",
+  "         check_alerts(From, Type).",
+  "check_alerts(Node, Type) :- alert(Node, Type, Level),",
+  "    send(gateway, alert_notice(Node, Type, Level)).",
+  "check_alerts(A, B).",
+  "react :- signal(estimator, estimate(Type, Node, Val, Confidence, Ts)),",
+  "         node_role(coordinator),",
+  "         retractall(estimate(Type, Node, A, B, C)),",
+  "         assert(estimate(Type, Node, Val, Confidence, Ts)),",
+  "         send(gateway, estimate(Type, Node, Val, Confidence, Ts)).",
+  "react :- signal(From, node_status(From, Status)),",
+  "         node_role(coordinator),",
+  "         retractall(node_status(From, A)),",
+  "         assert(node_status(From, Status)).",
   "",
   "alert(Node, temperature, high) :-",
   "    reading(Node, temperature, Val, Ts),",
@@ -88,14 +100,21 @@ var RULES = [
   "all_alerts(Alerts) :- findall(alert(N,T,L), alert(N,T,L), Alerts).",
   "online_nodes(Nodes) :- findall(N, node_status(N, online), Nodes).",
   "mesh_status(critical) :- alert(A, B, C).",
-  "mesh_status(normal) :- not(alert(A, B, C))."
+  "mesh_status(normal) :- not(alert(A, B, C)).",
+  "",
+  "update_threshold(Type, Min, Max) :-",
+  "    retractall(threshold(Type, A, B)),",
+  "    assert(threshold(Type, Min, Max)),",
+  "    send(gateway, threshold(Type, Min, Max))."
 ].join("\n");
 
 loadString(engine, RULES);
 
-// Assert this node's identity and role.
 engine.addClause(compound("node_role", [atom("coordinator")]));
 engine.addClause(compound("node_id",   [atom("coordinator")]));
+
+// Register ephemeral/1 builtin
+createReactiveEngine(engine);
 
 // ── SSE client management ─────────────────────────────────────
 
@@ -108,23 +127,17 @@ function notifyClients() {
     try {
       client.controller.enqueue(payload);
     } catch (e) {
-      // Client disconnected; remove on next iteration
       sseClients.delete(client);
     }
   }
 }
 
 // ── State extraction ──────────────────────────────────────────
-//
-// Queries the Prolog engine to build a JSON-friendly snapshot
-// of the current mesh state.
 
 function getState() {
-  // Mesh status: normal or critical
   var statusResult = engine.queryFirst(compound("mesh_status", [variable("S")]));
   var status = statusResult ? statusResult.args[0].name : "unknown";
 
-  // Online nodes
   var nodesResult = engine.queryFirst(compound("online_nodes", [variable("N")]));
   var onlineNodes = [];
   if (nodesResult) {
@@ -134,7 +147,6 @@ function getState() {
     }
   }
 
-  // All readings: reading(Node, Type, Value, Timestamp)
   var readingResults = engine.query(
     compound("reading", [variable("N"), variable("T"), variable("V"), variable("Ts")]),
     100
@@ -150,7 +162,6 @@ function getState() {
     });
   }
 
-  // All alerts: alert(Node, Type, Level)
   var alertResults = engine.queryFirst(compound("all_alerts", [variable("A")]));
   var alerts = [];
   if (alertResults) {
@@ -165,7 +176,6 @@ function getState() {
     }
   }
 
-  // All estimates: estimate(Type, Node, Value, Confidence, Timestamp)
   var estimateResults = engine.query(
     compound("estimate", [variable("T"), variable("N"), variable("V"), variable("C"), variable("Ts")]),
     100
@@ -182,7 +192,6 @@ function getState() {
     });
   }
 
-  // Thresholds
   var thresholdTypes = ["temperature", "humidity", "vpd"];
   var thresholds = {};
   for (var i = 0; i < thresholdTypes.length; i++) {
@@ -208,53 +217,32 @@ function getState() {
   };
 }
 
-// ── Signal handling with upsert ───────────────────────────────
-//
-// When a mesh signal arrives via UDP, we query the Prolog signal
-// policy to decide whether to accept it. Accepted facts are
-// upserted (old value retracted, new value asserted).
+// ── Signal handling ───────────────────────────────────────────
 
 function handleSignal(from, fact) {
-  var goal = compound("on_signal", [atom(from), fact, variable("Action")]);
-  var result = engine.queryFirst(goal);
+  var result = engine.queryWithSends(
+    compound("handle_signal", [atom(from), fact])
+  );
 
-  if (!result) {
-    console.log("[dashboard] ignored signal from " + from +
+  if (!result.result) {
+    console.log("[dashboard] dropped signal from " + from +
                 " (" + (fact.functor || fact.name || "?") + ")");
     return;
   }
 
-  var action = result.args[2];
-  if (action.type !== "atom" || action.name !== "assert") return;
+  console.log("[dashboard] accepted " + (fact.functor || fact.name) + " from " + from);
 
-  // Upsert for known fact types
-  if (fact.functor === "reading" && fact.args.length === 4) {
-    engine.retractFirst(compound("reading", [
-      fact.args[0], fact.args[1], variable("_V"), variable("_T")
-    ]));
-    engine.addClause(fact);
-    console.log("[dashboard] reading: " + fact.args[0].name + " " +
-                fact.args[1].name + " = " + fact.args[2].value);
-  } else if (fact.functor === "node_status" && fact.args.length === 2) {
-    engine.retractFirst(compound("node_status", [
-      fact.args[0], variable("_S")
-    ]));
-    engine.addClause(fact);
-    console.log("[dashboard] node_status: " + fact.args[0].name +
-                " -> " + fact.args[1].name);
-  } else if (fact.functor === "estimate" && fact.args.length === 5) {
-    engine.retractFirst(compound("estimate", [
-      fact.args[0], fact.args[1], variable("_V"), variable("_C"), variable("_T")
-    ]));
-    engine.addClause(fact);
-    console.log("[dashboard] estimate: " + fact.args[0].name + " " +
-                fact.args[1].name + " = " + fact.args[2].value);
-  } else {
-    engine.addClause(fact);
-    console.log("[dashboard] asserted: " + (fact.functor || fact.name));
+  // Dispatch all sends from Prolog react rules
+  for (var i = 0; i < result.sends.length; i++) {
+    var s = result.sends[i];
+    var targetName = s.target.name;
+    if (targetName === "gateway") {
+      sendToGateway(s.fact);
+    } else {
+      sendToNode(targetName + ":9500", s.fact);
+    }
   }
 
-  // Push updated state to all SSE clients
   notifyClients();
 }
 
@@ -275,9 +263,6 @@ function sendToGateway(fact) {
 }
 
 // ── Send a fact to a sensor ───────────────────────────────────
-//
-// In Docker Compose, sensor services are reachable by their
-// service name. We send threshold updates via UDP.
 
 function sendToNode(nodeAddr, fact) {
   var target = parseAddr(nodeAddr);
@@ -328,7 +313,6 @@ udpSock.bind(LISTEN_PORT, function() {
 
 // ── HTTP server (Bun.serve) ───────────────────────────────────
 
-// Read the static HTML file once at startup.
 var indexHtml = readFileSync(join(__dirname, "index.html"), "utf-8");
 
 Bun.serve({
@@ -337,21 +321,18 @@ Bun.serve({
   fetch: function(req) {
     var url = new URL(req.url);
 
-    // ── GET / — serve the dashboard HTML ──────────────────
     if (req.method === "GET" && url.pathname === "/") {
       return new Response(indexHtml, {
         headers: { "Content-Type": "text/html; charset=utf-8" }
       });
     }
 
-    // ── GET /api/state — JSON snapshot ────────────────────
     if (req.method === "GET" && url.pathname === "/api/state") {
       return new Response(JSON.stringify(getState()), {
         headers: { "Content-Type": "application/json" }
       });
     }
 
-    // ── GET /api/events — SSE stream ──────────────────────
     if (req.method === "GET" && url.pathname === "/api/events") {
       var client = { controller: null };
 
@@ -359,7 +340,6 @@ Bun.serve({
         start: function(controller) {
           client.controller = controller;
           sseClients.add(client);
-          // Send initial state immediately
           var initial = "data: " + JSON.stringify(getState()) + "\n\n";
           controller.enqueue(initial);
         },
@@ -377,7 +357,6 @@ Bun.serve({
       });
     }
 
-    // ── POST /api/threshold — update a threshold ──────────
     if (req.method === "POST" && url.pathname === "/api/threshold") {
       return req.json().then(function(body) {
         var type = body.type;
@@ -391,25 +370,26 @@ Bun.serve({
           });
         }
 
-        // Upsert the threshold in the Prolog engine
-        engine.retractFirst(compound("threshold", [
-          atom(type), variable("_Min"), variable("_Max")
-        ]));
-        engine.addClause(compound("threshold", [
-          atom(type), num(min), num(max)
-        ]));
+        // Upsert threshold and send to gateway via Prolog rule
+        var result = engine.queryWithSends(
+          compound("update_threshold", [atom(type), num(min), num(max)])
+        );
 
         console.log("[dashboard] threshold updated: " + type +
                     " min=" + min + " max=" + max);
 
-        // Push updated state to SSE clients
-        notifyClients();
+        // Dispatch sends from update_threshold rule
+        for (var i = 0; i < result.sends.length; i++) {
+          var s = result.sends[i];
+          var targetName = s.target.name;
+          if (targetName === "gateway") {
+            sendToGateway(s.fact);
+          } else {
+            sendToNode(targetName + ":9500", s.fact);
+          }
+        }
 
-        // Broadcast the new threshold to sensors via the gateway
-        var thresholdFact = compound("threshold", [
-          atom(type), num(min), num(max)
-        ]);
-        sendToGateway(thresholdFact);
+        notifyClients();
 
         return new Response(JSON.stringify(getState()), {
           headers: { "Content-Type": "application/json" }
@@ -417,7 +397,6 @@ Bun.serve({
       });
     }
 
-    // ── 404 fallback ──────────────────────────────────────
     return new Response("Not Found", { status: 404 });
   }
 });

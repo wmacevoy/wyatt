@@ -1,21 +1,15 @@
 // ============================================================
 // node.js — GreenhouseNode: engine + reactive + transport
 //
-// Wires together PrologEngine, SyncEngine, reactive signals,
-// and a transport. Each node has a role (coordinator, sensor,
-// estimator, gateway) that determines its signal policy.
-//
-// The estimator node automatically computes VPD when it has
-// both temperature and humidity readings for a sensor.
+// Incoming signals pass through Prolog ephemeral/react rules.
+// If accepted, the react rule upserts facts; otherwise dropped.
+// Outgoing messages are expressed via send/2 in react rules.
 // ============================================================
 
 import { PrologEngine } from "../../src/prolog-engine.js";
-import { serialize, deserialize, termEq, SyncEngine } from "../../src/sync.js";
+import { serialize, deserialize, SyncEngine } from "../../src/sync.js";
 import { createReactiveEngine } from "../../src/reactive-prolog.js";
-import {
-  buildGreenhouseKB, updateReading, setNodeStatus,
-  updateThreshold, updateEstimate
-} from "./greenhouse-kb.js";
+import { buildGreenhouseKB } from "./greenhouse-kb.js";
 
 const { atom, variable, compound, num } = PrologEngine;
 
@@ -54,109 +48,32 @@ export class GreenhouseNode {
     const fact = deserialize(payload.fact);
     if (!fact) return;
 
-    // Query the policy: on_signal(FromNode, Fact, Action)
-    const goal = compound("on_signal", [atom(fromAddress), fact, variable("Action")]);
-    const result = this.engine.queryFirst(goal);
-
-    let action = null;
-    if (result) {
-      const actionTerm = result.args[2];
-      if (actionTerm.type === "atom") action = actionTerm.name;
-    }
+    const result = this.engine.queryWithSends(
+      compound("handle_signal", [atom(fromAddress), fact])
+    );
 
     this._signalLog.push({
       from: fromAddress,
       fact: fact,
-      action: action || "ignore"
+      accepted: result.result !== null
     });
 
-    if (action === "assert") {
-      this._assertFact(fact, fromAddress);
-    } else if (action === "retract") {
-      this.sync.retractFact(fact);
-    }
-  }
-
-  _assertFact(fact, fromAddress) {
-    if (fact.type !== "compound") {
-      this.sync.assertFact(fact);
-      return;
-    }
-
-    // Upsert for specific fact types
-    if (fact.functor === "reading" && fact.args.length === 4) {
-      const nodeId = fact.args[0].name;
-      const sensorType = fact.args[1].name;
-      const value = fact.args[2].value;
-      const timestamp = fact.args[3].value;
-      updateReading(this.engine, PrologEngine, nodeId, sensorType, value, timestamp);
-      this.reactive.bump();
-
-      // Estimator: compute VPD when both readings available
-      if (this.role === "estimator") {
-        this._computeVPD(nodeId, timestamp);
+    if (result.result) {
+      // Dispatch all sends from Prolog react rules
+      for (var i = 0; i < result.sends.length; i++) {
+        var s = result.sends[i];
+        this.transport.send(s.target.name, {
+          kind: "signal",
+          from: this.id,
+          fact: serialize(s.fact)
+        });
       }
-      return;
-    }
-
-    if (fact.functor === "node_status" && fact.args.length === 2) {
-      setNodeStatus(this.engine, PrologEngine, fact.args[0].name, fact.args[1].name);
       this.reactive.bump();
-      return;
     }
-
-    if (fact.functor === "threshold" && fact.args.length === 3) {
-      updateThreshold(this.engine, PrologEngine, fact.args[0].name, fact.args[1].value, fact.args[2].value);
-      this.reactive.bump();
-      return;
-    }
-
-    if (fact.functor === "estimate" && fact.args.length === 5) {
-      updateEstimate(this.engine, PrologEngine,
-        fact.args[0].name, fact.args[1].name,
-        fact.args[2].value, fact.args[3].value, fact.args[4].value);
-      this.reactive.bump();
-      return;
-    }
-
-    // Default: plain assert
-    this.sync.assertFact(fact);
-  }
-
-  // ── VPD computation (estimator role) ──────────────────
-
-  _computeVPD(sensorId, timestamp) {
-    const tempR = this.engine.queryFirst(
-      compound("reading", [atom(sensorId), atom("temperature"), variable("V"), variable("T")])
-    );
-    const humR = this.engine.queryFirst(
-      compound("reading", [atom(sensorId), atom("humidity"), variable("V"), variable("T")])
-    );
-
-    if (!tempR || !humR) return;
-
-    const temp = tempR.args[2].value;
-    const humidity = humR.args[2].value;
-
-    // Magnus formula: saturated vapor pressure (kPa)
-    const es = 0.6108 * Math.exp(17.27 * temp / (temp + 237.3));
-    const ea = es * humidity / 100;
-    // VPD in centikPa (integer) for Prolog comparison with thresholds
-    const vpd = Math.round((es - ea) * 100);
-
-    // Store locally
-    updateEstimate(this.engine, PrologEngine, "vpd", sensorId, vpd, 100, timestamp);
-    this.reactive.bump();
-
-    // Send to coordinator
-    this.send("coordinator", compound("estimate", [
-      atom("vpd"), atom(sensorId), num(vpd), num(100), num(timestamp)
-    ]));
   }
 
   // ── Sending ─────────────────────────────────────────────
 
-  /** Send a fact to a specific node. */
   send(toNodeId, fact) {
     this.transport.send(toNodeId, {
       kind: "signal",
@@ -165,7 +82,6 @@ export class GreenhouseNode {
     });
   }
 
-  /** Broadcast a fact to all peers. */
   broadcast(fact) {
     this.transport.broadcast({
       kind: "signal",
