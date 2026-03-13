@@ -66,6 +66,8 @@ PrologEngine.prototype.unify = function(a, b, subst) {
   if (a.type === "var") { var s = _copyMap(subst); s.set(a.name, b); return s; }
   if (b.type === "var") { var s = _copyMap(subst); s.set(b.name, a); return s; }
   if (a.type === "atom" && b.type === "atom" && a.name === b.name) return subst;
+  if (a.type === "atom" && b.type === "compound" && b.args.length === 0 && a.name === b.functor) return subst;
+  if (a.type === "compound" && a.args.length === 0 && b.type === "atom" && a.functor === b.name) return subst;
   if (a.type === "num"  && b.type === "num"  && a.value === b.value) return subst;
   if (a.type === "compound" && b.type === "compound" &&
       a.functor === b.functor && a.args.length === b.args.length) {
