@@ -21,279 +21,157 @@
 // ============================================================
 
 import { PrologEngine } from "../../src/prolog-engine.js";
-const { atom: at, variable: v, compound: c, num: n, list } = PrologEngine;
+import { loadString } from "../../src/loader.js";
 
 export function buildVendingKB() {
   const e = new PrologEngine();
 
-  // ── Product catalog (static) ────────────────────────────
+  loadString(e, `
+% ── Product catalog (static) ────────────────────────────
+% product(Slot, Name, PriceCents)
+product(a1, cola,    125).
+product(a2, water,    75).
+product(a3, juice,   150).
+product(b1, chips,   100).
+product(b2, candy,    85).
+product(b3, cookies, 110).
 
-  // product(Slot, Name, PriceCents)
-  const products = [
-    ["a1", "cola",    125],
-    ["a2", "water",    75],
-    ["a3", "juice",   150],
-    ["b1", "chips",   100],
-    ["b2", "candy",    85],
-    ["b3", "cookies", 110],
-  ];
-  for (const [slot, name, price] of products) {
-    e.addClause(c("product", [at(slot), at(name), n(price)]));
-  }
+% ── Initial dynamic state ───────────────────────────────
+machine_state(idle).
+credit(0).
 
-  // ── Initial dynamic state ───────────────────────────────
+% Sensors (initially all ok)
+sensor(tilt,      ok).
+sensor(door,      closed).
+sensor(temp,      normal).
+sensor(coin_mech, ready).
+sensor(motor_a1,  ready).
+sensor(motor_a2,  ready).
+sensor(motor_a3,  ready).
+sensor(motor_b1,  ready).
+sensor(motor_b2,  ready).
+sensor(motor_b3,  ready).
+sensor(delivery,  clear).
+sensor(power,     ok).
 
-  e.addClause(c("machine_state", [at("idle")]));
-  e.addClause(c("credit", [n(0)]));
+% Inventory
+inventory(a1, 8).
+inventory(a2, 10).
+inventory(a3, 6).
+inventory(b1, 7).
+inventory(b2, 12).
+inventory(b3, 5).
 
-  // Sensors (initially all ok)
-  for (const [name, val] of [
-    ["tilt",       "ok"],
-    ["door",       "closed"],
-    ["temp",       "normal"],
-    ["coin_mech",  "ready"],
-    ["motor_a1",   "ready"], ["motor_a2",  "ready"], ["motor_a3",  "ready"],
-    ["motor_b1",   "ready"], ["motor_b2",  "ready"], ["motor_b3",  "ready"],
-    ["delivery",   "clear"],
-    ["power",      "ok"],
-  ]) {
-    e.addClause(c("sensor", [at(name), at(val)]));
-  }
+% ── Fault detection rules ───────────────────────────────
+fault_condition(tilt_detected) :- sensor(tilt, tilted).
+fault_condition(door_open)     :- sensor(door, open).
+fault_condition(overtemp)      :- sensor(temp, hot).
+fault_condition(coin_jam)      :- sensor(coin_mech, jammed).
+fault_condition(power_fault)   :- sensor(power, low).
+fault_condition(delivery_blocked) :- sensor(delivery, blocked).
 
-  // Inventory
-  for (const [slot, count] of [
-    ["a1", 8], ["a2", 10], ["a3", 6],
-    ["b1", 7], ["b2", 12], ["b3", 5],
-  ]) {
-    e.addClause(c("inventory", [at(slot), n(count)]));
-  }
+motor_fault(Slot) :- sensor(M, stuck), motor_for(Slot, M).
 
-  // ── Fault detection rules ───────────────────────────────
-  // These are DERIVED — they query sensor state and determine
-  // if a fault condition exists.  No manual fault tracking.
+motor_for(a1, motor_a1).
+motor_for(a2, motor_a2).
+motor_for(a3, motor_a3).
+motor_for(b1, motor_b1).
+motor_for(b2, motor_b2).
+motor_for(b3, motor_b3).
 
-  // fault_condition(tilt_detected) :- sensor(tilt, tilted).
-  e.addClause(c("fault_condition", [at("tilt_detected")]),
-    [c("sensor", [at("tilt"), at("tilted")])]);
+has_any_fault :- fault_condition(_).
 
-  // fault_condition(door_open) :- sensor(door, open).
-  e.addClause(c("fault_condition", [at("door_open")]),
-    [c("sensor", [at("door"), at("open")])]);
+has_critical_fault :- fault_condition(tilt_detected).
+has_critical_fault :- fault_condition(door_open).
+has_critical_fault :- fault_condition(power_fault).
 
-  // fault_condition(overtemp) :- sensor(temp, hot).
-  e.addClause(c("fault_condition", [at("overtemp")]),
-    [c("sensor", [at("temp"), at("hot")])]);
+all_faults(Faults) :- findall(F, fault_condition(F), Faults).
 
-  // fault_condition(coin_jam) :- sensor(coin_mech, jammed).
-  e.addClause(c("fault_condition", [at("coin_jam")]),
-    [c("sensor", [at("coin_mech"), at("jammed")])]);
+% ── Can-vend rules ──────────────────────────────────────
+can_vend(Slot) :-
+    machine_state(idle),
+    not(has_any_fault),
+    product(Slot, _Name, Price),
+    credit(Credit), Credit >= Price,
+    inventory(Slot, Count), Count > 0,
+    not(motor_fault(Slot)),
+    sensor(delivery, clear).
 
-  // fault_condition(power_fault) :- sensor(power, low).
-  e.addClause(c("fault_condition", [at("power_fault")]),
-    [c("sensor", [at("power"), at("low")])]);
+% vend_blocked_reason(Slot, Reason)
+vend_blocked_reason(Slot, has_fault)           :- has_any_fault.
+vend_blocked_reason(Slot, insufficient_credit) :- product(Slot, _, Price), credit(Credit), Credit < Price.
+vend_blocked_reason(Slot, out_of_stock)        :- inventory(Slot, 0).
+vend_blocked_reason(Slot, motor_stuck)         :- motor_fault(Slot).
+vend_blocked_reason(Slot, delivery_blocked)    :- sensor(delivery, blocked).
+vend_blocked_reason(Slot, not_idle)            :- machine_state(S), S \\= idle.
 
-  // fault_condition(delivery_blocked) :- sensor(delivery, blocked).
-  e.addClause(c("fault_condition", [at("delivery_blocked")]),
-    [c("sensor", [at("delivery"), at("blocked")])]);
+% ── Can-accept-coin ─────────────────────────────────────
+can_accept_coin :-
+    machine_state(idle),
+    not(has_critical_fault),
+    sensor(coin_mech, ready).
 
-  // motor_fault(Slot) :- sensor(MotorName, stuck), motor_for(Slot, MotorName).
-  e.addClause(c("motor_fault", [v("Slot")]),
-    [c("sensor", [v("M"), at("stuck")]), c("motor_for", [v("Slot"), v("M")])]);
+% ── Can-return-credit ───────────────────────────────────
+can_return_credit :- credit(C), C > 0, sensor(coin_mech, ready).
 
-  // motor_for(Slot, MotorName) — maps slots to motor sensors
-  for (const slot of ["a1","a2","a3","b1","b2","b3"]) {
-    e.addClause(c("motor_for", [at(slot), at("motor_" + slot)]));
-  }
+% ── Actions ─────────────────────────────────────────────
+do_insert_coin(Amt) :-
+    can_accept_coin,
+    credit(Old),
+    New is Old + Amt,
+    retract(credit(Old)),
+    assert(credit(New)).
 
-  // has_any_fault :- fault_condition(_).
-  e.addClause(c("has_any_fault", []),
-    [c("fault_condition", [v("_")])]);
+do_select(Slot) :-
+    can_vend(Slot),
+    product(Slot, _Name, Price),
+    credit(Old),
+    Change is Old - Price,
+    retract(credit(Old)),
+    assert(credit(Change)),
+    inventory(Slot, Count),
+    NewCount is Count - 1,
+    retract(inventory(Slot, Count)),
+    assert(inventory(Slot, NewCount)),
+    retract(machine_state(idle)),
+    assert(machine_state(vending)).
 
-  // has_critical_fault — faults that require immediate stop
-  e.addClause(c("has_critical_fault", []),
-    [c("fault_condition", [at("tilt_detected")])]);
-  e.addClause(c("has_critical_fault", []),
-    [c("fault_condition", [at("door_open")])]);
-  e.addClause(c("has_critical_fault", []),
-    [c("fault_condition", [at("power_fault")])]);
+do_vend_complete :-
+    machine_state(vending),
+    retract(machine_state(vending)),
+    assert(machine_state(idle)).
 
-  // all_faults(Faults) :- findall(F, fault_condition(F), Faults).
-  e.addClause(c("all_faults", [v("Faults")]),
-    [c("findall", [v("F"), c("fault_condition", [v("F")]), v("Faults")])]);
+do_return_credit :-
+    can_return_credit,
+    credit(C),
+    retract(credit(C)),
+    assert(credit(0)).
 
-  // ── Can-vend rules ──────────────────────────────────────
-  // These determine whether a vend is allowed right now.
+% ── Fault response policy ───────────────────────────────
+fault_response(tilt_detected, lock_and_alarm).
+fault_response(door_open, lock_and_alarm).
+fault_response(power_fault, emergency_return_credit).
+fault_response(overtemp, compressor_boost).
+fault_response(coin_jam, disable_coin_accept).
+fault_response(delivery_blocked, disable_vend).
 
-  // can_vend(Slot) :-
-  //     machine_state(idle),
-  //     not(has_any_fault),
-  //     product(Slot, _, Price),
-  //     credit(Credit), Credit >= Price,
-  //     inventory(Slot, Count), Count > 0,
-  //     not(motor_fault(Slot)),
-  //     sensor(delivery, clear).
-  e.addClause(c("can_vend", [v("Slot")]), [
-    c("machine_state", [at("idle")]),
-    c("not", [c("has_any_fault", [])]),
-    c("product", [v("Slot"), v("_Name"), v("Price")]),
-    c("credit", [v("Credit")]),
-    c(">=" , [v("Credit"), v("Price")]),
-    c("inventory", [v("Slot"), v("Count")]),
-    c(">" , [v("Count"), n(0)]),
-    c("not", [c("motor_fault", [v("Slot")])]),
-    c("sensor", [at("delivery"), at("clear")]),
-  ]);
+should_return_credit_on_fault :-
+    has_critical_fault, credit(C), C > 0.
 
-  // vend_blocked_reason(Slot, Reason) — why can't we vend?
-  e.addClause(c("vend_blocked_reason", [v("Slot"), at("has_fault")]),
-    [c("has_any_fault", [])]);
-  e.addClause(c("vend_blocked_reason", [v("Slot"), at("insufficient_credit")]),
-    [c("product", [v("Slot"), v("_"), v("Price")]),
-     c("credit", [v("Credit")]),
-     c("<", [v("Credit"), v("Price")])]);
-  e.addClause(c("vend_blocked_reason", [v("Slot"), at("out_of_stock")]),
-    [c("inventory", [v("Slot"), n(0)])]);
-  e.addClause(c("vend_blocked_reason", [v("Slot"), at("motor_stuck")]),
-    [c("motor_fault", [v("Slot")])]);
-  e.addClause(c("vend_blocked_reason", [v("Slot"), at("delivery_blocked")]),
-    [c("sensor", [at("delivery"), at("blocked")])]);
-  e.addClause(c("vend_blocked_reason", [v("Slot"), at("not_idle")]),
-    [c("machine_state", [v("S")]), c("\\=", [v("S"), at("idle")])]);
+% ── Display / status queries ────────────────────────────
+display_message('OUT OF ORDER \u2014 TILT DETECTED') :- fault_condition(tilt_detected).
+display_message('SERVICE DOOR OPEN')                  :- fault_condition(door_open).
+display_message('POWER LOW \u2014 RETURNING CREDIT')   :- fault_condition(power_fault).
+display_message('COIN MECHANISM JAMMED')              :- fault_condition(coin_jam).
+display_message('TEMPERATURE WARNING')                :- fault_condition(overtemp).
+display_message('PLEASE REMOVE ITEM')                 :- sensor(delivery, blocked).
+display_message('VENDING...')                         :- machine_state(vending).
+display_message('INSERT COINS')                       :- machine_state(idle), credit(0), not(has_any_fault).
+display_message('SELECT ITEM')                        :- machine_state(idle), credit(C), C > 0, not(has_any_fault).
 
-  // ── Can-accept-coin ─────────────────────────────────────
-
-  // can_accept_coin :-
-  //     machine_state(idle),
-  //     not(has_critical_fault),
-  //     sensor(coin_mech, ready).
-  e.addClause(c("can_accept_coin", []), [
-    c("machine_state", [at("idle")]),
-    c("not", [c("has_critical_fault", [])]),
-    c("sensor", [at("coin_mech"), at("ready")]),
-  ]);
-
-  // ── Can-return-credit ───────────────────────────────────
-
-  // can_return_credit :- credit(C), C > 0, sensor(coin_mech, ready).
-  e.addClause(c("can_return_credit", []), [
-    c("credit", [v("C")]),
-    c(">", [v("C"), n(0)]),
-    c("sensor", [at("coin_mech"), at("ready")]),
-  ]);
-
-  // ── Actions ─────────────────────────────────────────────
-
-  // do_insert_coin(Amount) :-
-  //     can_accept_coin,
-  //     credit(Old),
-  //     New is Old + Amount,
-  //     retract(credit(Old)),
-  //     assert(credit(New)).
-  e.addClause(c("do_insert_coin", [v("Amt")]), [
-    c("can_accept_coin", []),
-    c("credit", [v("Old")]),
-    c("is", [v("New"), c("+", [v("Old"), v("Amt")])]),
-    c("retract", [c("credit", [v("Old")])]),
-    c("assert", [c("credit", [v("New")])]),
-  ]);
-
-  // do_select(Slot) :-
-  //     can_vend(Slot),
-  //     product(Slot, _, Price),
-  //     credit(Old),
-  //     New is Old - Price,
-  //     retract(credit(Old)),
-  //     assert(credit(New)),
-  //     inventory(Slot, Count),
-  //     NewCount is Count - 1,
-  //     retract(inventory(Slot, Count)),
-  //     assert(inventory(Slot, NewCount)),
-  //     retract(machine_state(idle)),
-  //     assert(machine_state(vending)).
-  e.addClause(c("do_select", [v("Slot")]), [
-    c("can_vend", [v("Slot")]),
-    c("product", [v("Slot"), v("_Name"), v("Price")]),
-    c("credit", [v("Old")]),
-    c("is", [v("Change"), c("-", [v("Old"), v("Price")])]),
-    c("retract", [c("credit", [v("Old")])]),
-    c("assert", [c("credit", [v("Change")])]),
-    c("inventory", [v("Slot"), v("Count")]),
-    c("is", [v("NewCount"), c("-", [v("Count"), n(1)])]),
-    c("retract", [c("inventory", [v("Slot"), v("Count")])]),
-    c("assert", [c("inventory", [v("Slot"), v("NewCount")])]),
-    c("retract", [c("machine_state", [at("idle")])]),
-    c("assert", [c("machine_state", [at("vending")])]),
-  ]);
-
-  // do_vend_complete :-
-  //     machine_state(vending),
-  //     retract(machine_state(vending)),
-  //     assert(machine_state(idle)).
-  e.addClause(c("do_vend_complete", []), [
-    c("machine_state", [at("vending")]),
-    c("retract", [c("machine_state", [at("vending")])]),
-    c("assert", [c("machine_state", [at("idle")])]),
-  ]);
-
-  // do_return_credit :-
-  //     can_return_credit,
-  //     credit(C),
-  //     retract(credit(C)),
-  //     assert(credit(0)).
-  e.addClause(c("do_return_credit", []), [
-    c("can_return_credit", []),
-    c("credit", [v("C")]),
-    c("retract", [c("credit", [v("C")])]),
-    c("assert", [c("credit", [n(0)])]),
-  ]);
-
-  // ── Fault response policy ───────────────────────────────
-  // What should the machine DO when it detects a fault?
-
-  // fault_response(tilt_detected, lock_and_alarm).
-  e.addClause(c("fault_response", [at("tilt_detected"), at("lock_and_alarm")]));
-  e.addClause(c("fault_response", [at("door_open"), at("lock_and_alarm")]));
-  e.addClause(c("fault_response", [at("power_fault"), at("emergency_return_credit")]));
-  e.addClause(c("fault_response", [at("overtemp"), at("compressor_boost")]));
-  e.addClause(c("fault_response", [at("coin_jam"), at("disable_coin_accept")]));
-  e.addClause(c("fault_response", [at("delivery_blocked"), at("disable_vend")]));
-
-  // should_return_credit_on_fault :-
-  //     has_critical_fault, credit(C), C > 0.
-  e.addClause(c("should_return_credit_on_fault", []), [
-    c("has_critical_fault", []),
-    c("credit", [v("C")]),
-    c(">", [v("C"), n(0)]),
-  ]);
-
-  // ── Display / status queries ────────────────────────────
-
-  // display_message(Msg) — what to show on the screen
-  e.addClause(c("display_message", [at("OUT OF ORDER — TILT DETECTED")]),
-    [c("fault_condition", [at("tilt_detected")])]);
-  e.addClause(c("display_message", [at("SERVICE DOOR OPEN")]),
-    [c("fault_condition", [at("door_open")])]);
-  e.addClause(c("display_message", [at("POWER LOW — RETURNING CREDIT")]),
-    [c("fault_condition", [at("power_fault")])]);
-  e.addClause(c("display_message", [at("COIN MECHANISM JAMMED")]),
-    [c("fault_condition", [at("coin_jam")])]);
-  e.addClause(c("display_message", [at("TEMPERATURE WARNING")]),
-    [c("fault_condition", [at("overtemp")])]);
-  e.addClause(c("display_message", [at("PLEASE REMOVE ITEM")]),
-    [c("sensor", [at("delivery"), at("blocked")])]);
-  e.addClause(c("display_message", [at("VENDING...")]),
-    [c("machine_state", [at("vending")])]);
-  e.addClause(c("display_message", [at("INSERT COINS")]),
-    [c("machine_state", [at("idle")]), c("credit", [n(0)]),
-     c("not", [c("has_any_fault", [])])]);
-  e.addClause(c("display_message", [at("SELECT ITEM")]),
-    [c("machine_state", [at("idle")]), c("credit", [v("C")]),
-     c(">", [v("C"), n(0)]),
-     c("not", [c("has_any_fault", [])])]);
-
-  // available_slots(Slots) — which slots can currently vend
-  e.addClause(c("available_slots", [v("Slots")]),
-    [c("findall", [v("S"), c("can_vend", [v("S")]), v("Slots")])]);
+% ── Available slots ─────────────────────────────────────
+available_slots(Slots) :- findall(S, can_vend(S), Slots).
+  `);
 
   return e;
 }

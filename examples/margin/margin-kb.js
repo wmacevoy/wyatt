@@ -22,6 +22,8 @@
 // ============================================================
 
 import { PrologEngine } from "../../src/prolog-engine.js";
+import { loadString } from "../../src/loader.js";
+
 var at = PrologEngine.atom, v = PrologEngine.variable;
 var c = PrologEngine.compound, n = PrologEngine.num;
 
@@ -114,180 +116,137 @@ function registerBDBuiltins(engine) {
       };
     })(bdComps[i][0], bdComps[i][1]);
   }
+
+  // bd_sum_list builtin — sums a Prolog list of decimal-atom values
+  self.builtins["bd_sum_list/2"] = function(goal, rest, subst, counter, depth, onSolution) {
+    var list = self.deepWalk(goal.args[0], subst);
+    var out = goal.args[1];
+    var sum = _toBD("0");
+    while (list && list.type === "compound" && list.functor === "." && list.args.length === 2) {
+      var item = self.deepWalk(list.args[0], subst);
+      var val = _bdEval(item);
+      if (val !== null) sum = sum + val;
+      list = self.deepWalk(list.args[1], subst);
+    }
+    var s = self.unify(out, at(_bdStr(sum)), subst);
+    if (s !== null) self.solve(rest, s, counter, depth + 1, onSolution);
+  };
 }
+
+// ── Prolog text for facts and rules ──────────────────────────
+
+var marginProgram = [
+  "% ── Initial account state ──────────────────────────────",
+  "account_balance('100000.00').",
+  "margin_requirement('25').",
+  "",
+  "% ── Sample positions ───────────────────────────────────",
+  "position('BTC', '2.5', '29500.00').",
+  "position('ETH', '50', '1850.00').",
+  "",
+  "% ── Initial prices ─────────────────────────────────────",
+  "price('BTC', '30000.00').",
+  "price('ETH', '1900.00').",
+  "",
+  "% ── Triggers (static config) ───────────────────────────",
+  "trigger_config('BTC', take_profit, '35000.00').",
+  "trigger_config('BTC', stop_loss, '27000.00').",
+  "trigger_config('ETH', take_profit, '2200.00').",
+  "trigger_config('ETH', stop_loss, '1600.00').",
+  "",
+  "% ── Derived: position_value(Symbol, Qty, Value) ────────",
+  "position_value(Sym, Qty, Val) :-",
+  "  position(Sym, Qty, _Entry),",
+  "  price(Sym, Price),",
+  "  bd_is(Val, Qty * Price).",
+  "",
+  "% ── Derived: unrealized_pnl(Symbol, Qty, PnL) ─────────",
+  "unrealized_pnl(Sym, Qty, PnL) :-",
+  "  position(Sym, Qty, Entry),",
+  "  price(Sym, Price),",
+  "  bd_is(Diff, Price - Entry),",
+  "  bd_is(PnL, Qty * Diff).",
+  "",
+  "% ── Derived: total_positions_value(V) ──────────────────",
+  "total_positions_value(Total) :-",
+  "  findall(V, position_value(_S, _Q, V), Vals),",
+  "  bd_sum_list(Vals, Total).",
+  "",
+  "% ── Derived: total_pnl(PnL) ───────────────────────────",
+  "total_pnl(Total) :-",
+  "  findall(P, unrealized_pnl(_S, _Q, P), PnLs),",
+  "  bd_sum_list(PnLs, Total).",
+  "",
+  "% ── Derived: total_equity(E) ───────────────────────────",
+  "total_equity(Eq) :-",
+  "  account_balance(Bal),",
+  "  total_pnl(PnL),",
+  "  bd_is(Eq, Bal + PnL).",
+  "",
+  "% ── Derived: margin_used(M) ────────────────────────────",
+  "margin_used(M) :-",
+  "  total_positions_value(TV),",
+  "  margin_requirement(Pct),",
+  "  bd_is(Raw, TV * Pct),",
+  "  bd_is(M, Raw / '100').",
+  "",
+  "% ── Derived: margin_ratio(R) ───────────────────────────",
+  "margin_ratio(R) :-",
+  "  total_equity(Eq),",
+  "  margin_used(M),",
+  "  bd_gt(M, '0'),",
+  "  bd_is(Raw, Eq * '100'),",
+  "  bd_is(R, Raw / M).",
+  "",
+  "% ── Derived: margin_status(Status) ─────────────────────",
+  "margin_status(liquidation) :-",
+  "  margin_ratio(R),",
+  "  bd_lt(R, '50').",
+  "margin_status(margin_call) :-",
+  "  margin_ratio(R),",
+  "  bd_gte(R, '50'),",
+  "  bd_lt(R, '100').",
+  "margin_status(warning) :-",
+  "  margin_ratio(R),",
+  "  bd_gte(R, '100'),",
+  "  bd_lt(R, '150').",
+  "margin_status(healthy) :-",
+  "  margin_ratio(R),",
+  "  bd_gte(R, '150').",
+  "",
+  "% ── Triggers: trigger(Symbol, Type, Action) ────────────",
+  "trigger(Sym, take_profit, sell) :-",
+  "  trigger_config(Sym, take_profit, Thresh),",
+  "  price(Sym, Price),",
+  "  bd_gte(Price, Thresh).",
+  "trigger(Sym, stop_loss, sell) :-",
+  "  trigger_config(Sym, stop_loss, Thresh),",
+  "  price(Sym, Price),",
+  "  bd_lte(Price, Thresh).",
+  "trigger(Sym, margin_call, reduce_position) :-",
+  "  margin_status(margin_call),",
+  "  position(Sym, _Q, _E).",
+  "trigger(Sym, liquidation, liquidate) :-",
+  "  margin_status(liquidation),",
+  "  position(Sym, _Q, _E).",
+  "",
+  "% ── All active triggers ────────────────────────────────",
+  "active_triggers(Ts) :-",
+  "  findall(t(S, Ty, A), trigger(S, Ty, A), Ts).",
+  "",
+  "% ── Display status ─────────────────────────────────────",
+  "display_status('LIQUIDATION WARNING') :- margin_status(liquidation).",
+  "display_status('MARGIN CALL') :- margin_status(margin_call).",
+  "display_status('LOW MARGIN WARNING') :- margin_status(warning).",
+  "display_status('OK') :- margin_status(healthy)."
+].join("\n");
 
 // ── Build the knowledge base ─────────────────────────────────
 
 function buildMarginKB() {
   var e = new PrologEngine();
   registerBDBuiltins(e);
-
-  // ── Initial account state ────────────────────────────────
-  e.addClause(c("account_balance", [at("100000.00")]));
-  e.addClause(c("margin_requirement", [at("25")]));
-
-  // ── Sample positions ─────────────────────────────────────
-  // position(Symbol, Qty, EntryPrice)
-  e.addClause(c("position", [at("BTC"), at("2.5"), at("29500.00")]));
-  e.addClause(c("position", [at("ETH"), at("50"), at("1850.00")]));
-
-  // ── Initial prices ───────────────────────────────────────
-  e.addClause(c("price", [at("BTC"), at("30000.00")]));
-  e.addClause(c("price", [at("ETH"), at("1900.00")]));
-
-  // ── Triggers (static config) ─────────────────────────────
-  // trigger_config(Symbol, Type, ThresholdPrice)
-  e.addClause(c("trigger_config", [at("BTC"), at("take_profit"), at("35000.00")]));
-  e.addClause(c("trigger_config", [at("BTC"), at("stop_loss"), at("27000.00")]));
-  e.addClause(c("trigger_config", [at("ETH"), at("take_profit"), at("2200.00")]));
-  e.addClause(c("trigger_config", [at("ETH"), at("stop_loss"), at("1600.00")]));
-
-  // ── Derived: position_value(Symbol, Qty, Value) ──────────
-  // Value = Qty * CurrentPrice
-  e.addClause(c("position_value", [v("Sym"), v("Qty"), v("Val")]), [
-    c("position", [v("Sym"), v("Qty"), v("_Entry")]),
-    c("price", [v("Sym"), v("Price")]),
-    c("bd_is", [v("Val"), c("*", [v("Qty"), v("Price")])])
-  ]);
-
-  // ── Derived: unrealized_pnl(Symbol, Qty, PnL) ───────────
-  // PnL = Qty * (CurrentPrice - EntryPrice)
-  e.addClause(c("unrealized_pnl", [v("Sym"), v("Qty"), v("PnL")]), [
-    c("position", [v("Sym"), v("Qty"), v("Entry")]),
-    c("price", [v("Sym"), v("Price")]),
-    c("bd_is", [v("Diff"), c("-", [v("Price"), v("Entry")])]),
-    c("bd_is", [v("PnL"), c("*", [v("Qty"), v("Diff")])])
-  ]);
-
-  // ── Derived: total_positions_value(V) ────────────────────
-  // Sum of all position values. Uses findall + sum helper.
-  e.addClause(c("total_positions_value", [v("Total")]), [
-    c("findall", [v("V"), c("position_value", [v("_S"), v("_Q"), v("V")]), v("Vals")]),
-    c("bd_sum_list", [v("Vals"), v("Total")])
-  ]);
-
-  // ── Derived: total_pnl(PnL) ─────────────────────────────
-  e.addClause(c("total_pnl", [v("Total")]), [
-    c("findall", [v("P"), c("unrealized_pnl", [v("_S"), v("_Q"), v("P")]), v("PnLs")]),
-    c("bd_sum_list", [v("PnLs"), v("Total")])
-  ]);
-
-  // ── Derived: total_equity(E) ─────────────────────────────
-  // Equity = Balance + TotalPnL
-  e.addClause(c("total_equity", [v("Eq")]), [
-    c("account_balance", [v("Bal")]),
-    c("total_pnl", [v("PnL")]),
-    c("bd_is", [v("Eq"), c("+", [v("Bal"), v("PnL")])])
-  ]);
-
-  // ── Derived: margin_used(M) ──────────────────────────────
-  // margin_used = total_positions_value * margin_requirement / 100
-  e.addClause(c("margin_used", [v("M")]), [
-    c("total_positions_value", [v("TV")]),
-    c("margin_requirement", [v("Pct")]),
-    c("bd_is", [v("Raw"), c("*", [v("TV"), v("Pct")])]),
-    c("bd_is", [v("M"), c("/", [v("Raw"), at("100")])])
-  ]);
-
-  // ── Derived: margin_ratio(R) ─────────────────────────────
-  // ratio = equity / margin_used * 100 (as percentage)
-  e.addClause(c("margin_ratio", [v("R")]), [
-    c("total_equity", [v("Eq")]),
-    c("margin_used", [v("M")]),
-    c("bd_gt", [v("M"), at("0")]),
-    c("bd_is", [v("Raw"), c("*", [v("Eq"), at("100")])]),
-    c("bd_is", [v("R"), c("/", [v("Raw"), v("M")])])
-  ]);
-
-  // ── Derived: margin_status(Status) ───────────────────────
-  // healthy: ratio >= 150%
-  // warning: 100% <= ratio < 150%
-  // margin_call: 50% <= ratio < 100%
-  // liquidation: ratio < 50%
-  e.addClause(c("margin_status", [at("liquidation")]), [
-    c("margin_ratio", [v("R")]),
-    c("bd_lt", [v("R"), at("50")])
-  ]);
-  e.addClause(c("margin_status", [at("margin_call")]), [
-    c("margin_ratio", [v("R")]),
-    c("bd_gte", [v("R"), at("50")]),
-    c("bd_lt", [v("R"), at("100")])
-  ]);
-  e.addClause(c("margin_status", [at("warning")]), [
-    c("margin_ratio", [v("R")]),
-    c("bd_gte", [v("R"), at("100")]),
-    c("bd_lt", [v("R"), at("150")])
-  ]);
-  e.addClause(c("margin_status", [at("healthy")]), [
-    c("margin_ratio", [v("R")]),
-    c("bd_gte", [v("R"), at("150")])
-  ]);
-
-  // ── Triggers: trigger(Symbol, Type, Action) ──────────────
-  // take_profit: price >= threshold → sell
-  e.addClause(c("trigger", [v("Sym"), at("take_profit"), at("sell")]), [
-    c("trigger_config", [v("Sym"), at("take_profit"), v("Thresh")]),
-    c("price", [v("Sym"), v("Price")]),
-    c("bd_gte", [v("Price"), v("Thresh")])
-  ]);
-
-  // stop_loss: price <= threshold → sell
-  e.addClause(c("trigger", [v("Sym"), at("stop_loss"), at("sell")]), [
-    c("trigger_config", [v("Sym"), at("stop_loss"), v("Thresh")]),
-    c("price", [v("Sym"), v("Price")]),
-    c("bd_lte", [v("Price"), v("Thresh")])
-  ]);
-
-  // margin_call trigger: margin_status is margin_call → reduce_position
-  e.addClause(c("trigger", [v("Sym"), at("margin_call"), at("reduce_position")]), [
-    c("margin_status", [at("margin_call")]),
-    c("position", [v("Sym"), v("_Q"), v("_E")])
-  ]);
-
-  // liquidation trigger: margin_status is liquidation → liquidate
-  e.addClause(c("trigger", [v("Sym"), at("liquidation"), at("liquidate")]), [
-    c("margin_status", [at("liquidation")]),
-    c("position", [v("Sym"), v("_Q"), v("_E")])
-  ]);
-
-  // ── All active triggers ──────────────────────────────────
-  e.addClause(c("active_triggers", [v("Ts")]), [
-    c("findall",
-      [c("t", [v("S"), v("Ty"), v("A")]),
-       c("trigger", [v("S"), v("Ty"), v("A")]),
-       v("Ts")])
-  ]);
-
-  // ── Display status ───────────────────────────────────────
-  e.addClause(c("display_status", [at("LIQUIDATION WARNING")]), [
-    c("margin_status", [at("liquidation")])
-  ]);
-  e.addClause(c("display_status", [at("MARGIN CALL")]), [
-    c("margin_status", [at("margin_call")])
-  ]);
-  e.addClause(c("display_status", [at("LOW MARGIN WARNING")]), [
-    c("margin_status", [at("warning")])
-  ]);
-  e.addClause(c("display_status", [at("OK")]), [
-    c("margin_status", [at("healthy")])
-  ]);
-
-  // ── bd_sum_list builtin ──────────────────────────────────
-  // Sums a Prolog list of decimal-atom values
-  e.builtins["bd_sum_list/2"] = function(goal, rest, subst, counter, depth, onSolution) {
-    var list = e.deepWalk(goal.args[0], subst);
-    var out = goal.args[1];
-    var sum = _toBD("0");
-    while (list && list.type === "compound" && list.functor === "." && list.args.length === 2) {
-      var item = e.deepWalk(list.args[0], subst);
-      var val = _bdEval(item);
-      if (val !== null) sum = sum + val;
-      list = e.deepWalk(list.args[1], subst);
-    }
-    var s = e.unify(out, at(_bdStr(sum)), subst);
-    if (s !== null) e.solve(rest, s, counter, depth + 1, onSolution);
-  };
-
+  loadString(e, marginProgram);
   return e;
 }
 
