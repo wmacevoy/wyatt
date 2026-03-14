@@ -7,7 +7,7 @@
 
 import { PrologEngine } from './prolog-engine.js';
 import { persist } from './persist.js';
-import { qsqlAdapter, _qsql_tableName, _qsql_argVal, _qsql_safeName } from './qsql.js';
+import { qsqlAdapter, _qsql_tableName, _qsql_argVal, _qsql_argInterval, _qsql_safeName, _nextUp, _nextDown } from './qsql.js';
 
 var atom = PrologEngine.atom;
 var compound = PrologEngine.compound;
@@ -28,16 +28,12 @@ MockDB.prototype.exec = function(sql) {
     var tbl = m[1] || m[2];
     if (!this._tables[tbl]) {
       var body = m[3];
-
-      // Extract PK columns
       var pkCols = [];
       var pkMatch = body.match(/PRIMARY KEY\s*\(([^)]+)\)/i);
       if (pkMatch) {
         var pkParts = pkMatch[1].split(",");
         for (var p = 0; p < pkParts.length; p++) pkCols.push(pkParts[p].trim());
       }
-
-      // Remove standalone PRIMARY KEY constraint from column list
       var colPart = body.replace(/,\s*PRIMARY KEY\s*\([^)]*\)/i, "");
       var rawCols = colPart.split(",");
       var cols = [];
@@ -45,84 +41,63 @@ MockDB.prototype.exec = function(sql) {
         var parts = rawCols[i].trim().split(/\s+/);
         var colName = parts[0];
         cols.push(colName);
-        // Inline PRIMARY KEY
         var hasInlinePK = false;
         for (var j = 0; j < parts.length; j++) {
           if (parts[j].toUpperCase() === "PRIMARY") { hasInlinePK = true; break; }
         }
         if (hasInlinePK) pkCols.push(colName);
       }
-
-      // Map PK names to column indices
       var pkIndices = [];
       for (var i = 0; i < pkCols.length; i++) {
         for (var j = 0; j < cols.length; j++) {
           if (cols[j] === pkCols[i]) { pkIndices.push(j); break; }
         }
       }
-
       this._tables[tbl] = { cols: cols, pkIndices: pkIndices, rows: {} };
     }
   }
-  // CREATE INDEX — no-op
 };
 
 MockDB.prototype.prepare = function(sql) {
   var self = this;
-
-  // INSERT OR IGNORE INTO "tbl" VALUES (?, ?, ...)
   var im = sql.match(/INSERT OR IGNORE INTO\s+(?:"([^"]+)"|(\w+))/);
   if (im) {
     var tbl = im[1] || im[2];
-    var stmt = {
+    return {
       run: function() {
         var args = Array.prototype.slice.call(arguments);
         var table = self._tables[tbl];
         if (!table) return;
         var pk = "";
-        for (var i = 0; i < table.pkIndices.length; i++) {
-          pk += String(args[table.pkIndices[i]]) + "\0";
-        }
+        for (var i = 0; i < table.pkIndices.length; i++) pk += String(args[table.pkIndices[i]]) + "\0";
         if (table.rows[pk]) return;
         var row = {};
-        for (var i = 0; i < table.cols.length && i < args.length; i++) {
-          row[table.cols[i]] = args[i];
-        }
+        for (var i = 0; i < table.cols.length && i < args.length; i++) row[table.cols[i]] = args[i];
         table.rows[pk] = row;
       }
     };
-    return stmt;
   }
-
-  // DELETE FROM "tbl" WHERE col = ?
   var dm = sql.match(/DELETE FROM\s+(?:"([^"]+)"|(\w+))\s+WHERE\s+(\w+)\s*=\s*\?/);
   if (dm) {
     var tbl = dm[1] || dm[2];
     var col = dm[3];
-    var stmt = {
+    return {
       run: function(val) {
         var table = self._tables[tbl];
         if (!table) return;
         var toDelete = [];
-        for (var pk in table.rows) {
-          if (table.rows[pk][col] === val) toDelete.push(pk);
-        }
-        for (var i = 0; i < toDelete.length; i++) {
-          delete table.rows[toDelete[i]];
-        }
+        for (var pk in table.rows) { if (table.rows[pk][col] === val) toDelete.push(pk); }
+        for (var i = 0; i < toDelete.length; i++) delete table.rows[toDelete[i]];
       }
     };
-    return stmt;
   }
-
-  // SELECT col1, col2 FROM "tbl"
   var sm = sql.match(/SELECT\s+(.+?)\s+FROM\s+(?:"([^"]+)"|(\w+))/);
   if (sm) {
     var colStr = sm[1];
     var tbl = sm[2] || sm[3];
     var selectCols = colStr.split(",");
     for (var i = 0; i < selectCols.length; i++) selectCols[i] = selectCols[i].trim();
-    var stmt = {
+    return {
       all: function() {
         var table = self._tables[tbl];
         if (!table) return [];
@@ -130,18 +105,14 @@ MockDB.prototype.prepare = function(sql) {
         for (var pk in table.rows) {
           var row = table.rows[pk];
           var obj = {};
-          for (var i = 0; i < selectCols.length; i++) {
-            obj[selectCols[i]] = row[selectCols[i]];
-          }
+          for (var i = 0; i < selectCols.length; i++) obj[selectCols[i]] = row[selectCols[i]];
           results.push(obj);
         }
         return results;
       },
       run: function() {}
     };
-    return stmt;
   }
-
   return { run: function() {}, all: function() { return []; } };
 };
 
@@ -197,6 +168,84 @@ test("argVal compound → JSON", function() {
   var val = _qsql_argVal({ t: "c", f: "pair", a: [{ t: "n", v: 1 }] });
   assert(typeof val === "string");
   assert(val.indexOf("pair") >= 0);
+});
+
+// ── Interval tests ──────────────────────────────────────────
+
+test("nextUp positive", function() {
+  var x = 1.0;
+  var u = _nextUp(x);
+  assert(u > x, "nextUp(1.0) should be > 1.0");
+  assert(u - x < 1e-15, "nextUp(1.0) should be within 1 ULP");
+});
+
+test("nextDown positive", function() {
+  var x = 1.0;
+  var d = _nextDown(x);
+  assert(d < x, "nextDown(1.0) should be < 1.0");
+  assert(x - d < 1e-15, "nextDown(1.0) should be within 1 ULP");
+});
+
+test("nextUp negative", function() {
+  var u = _nextUp(-1.0);
+  assert(u > -1.0, "nextUp(-1.0) should be > -1.0");
+  assert(u < 0, "nextUp(-1.0) should still be negative");
+});
+
+test("nextDown negative", function() {
+  var d = _nextDown(-1.0);
+  assert(d < -1.0, "nextDown(-1.0) should be < -1.0");
+});
+
+test("nextUp zero", function() {
+  assert(_nextUp(0) === 5e-324, "nextUp(0) should be Number.MIN_VALUE");
+});
+
+test("nextDown zero", function() {
+  assert(_nextDown(0) === -5e-324, "nextDown(0) should be -Number.MIN_VALUE");
+});
+
+test("nextUp/nextDown are inverse", function() {
+  var x = 42.5;
+  assert(_nextDown(_nextUp(x)) === x, "nextDown(nextUp(x)) should be x");
+  assert(_nextUp(_nextDown(x)) === x, "nextUp(nextDown(x)) should be x");
+});
+
+test("argInterval atom", function() {
+  var iv = _qsql_argInterval({ t: "a", n: "btc" });
+  assert(iv[0] === "btc");
+  assert(iv[1] === null && iv[2] === null && iv[3] === null);
+});
+
+test("argInterval plain number", function() {
+  var iv = _qsql_argInterval({ t: "n", v: 42 });
+  assert(iv[0] === 42);
+  assert(iv[1] === 42 && iv[2] === 42);
+  assert(iv[3] === null, "plain number has no x");
+});
+
+test("argInterval BigDecimal", function() {
+  var iv = _qsql_argInterval({ t: "n", v: 67432.5, r: "67432.50M" });
+  assert(iv[0] === 67432.5, "val");
+  assert(iv[1] < 67432.5, "lo < val");
+  assert(iv[2] > 67432.5, "hi > val");
+  assert(iv[3] === "67432.50", "x = raw digits");
+});
+
+test("argInterval BigInt", function() {
+  var iv = _qsql_argInterval({ t: "n", v: 42, r: "42N" });
+  assert(iv[0] === 42, "val");
+  assert(iv[1] < 42, "lo < val");
+  assert(iv[2] > 42, "hi > val");
+  assert(iv[3] === "42", "x = raw digits");
+});
+
+test("argInterval brackets exact value", function() {
+  // 0.1 is NOT exact in IEEE 754
+  var iv = _qsql_argInterval({ t: "n", v: 0.1, r: "0.1M" });
+  assert(iv[1] <= 0.1, "lo <= 0.1 (the double approx)");
+  assert(iv[2] >= 0.1, "hi >= 0.1");
+  assert(iv[3] === "0.1", "x preserves exact string");
 });
 
 // ── Integration tests: through persist ──────────────────────
@@ -315,13 +364,14 @@ test("addClause skips rules", function() {
   assert(e2.clauses.length === 1, "expected 1 clause, got " + e2.clauses.length);
 });
 
+// ── QSQL-specific: schema + intervals ───────────────────────
+
 test("per-predicate tables", function() {
   var db = new MockDB();
   var e = new PrologEngine();
   persist(e, qsqlAdapter(db));
   e.queryFirst(compound("assert", [compound("color", [atom("red")])]));
   e.queryFirst(compound("assert", [compound("price", [atom("aapl"), num(187)])]));
-
   assert(db._tables["q$color$1"] !== undefined, "missing q$color$1");
   assert(db._tables["q$price$2"] !== undefined, "missing q$price$2");
   assert(db._tables["qsql_meta"] !== undefined, "missing qsql_meta");
@@ -339,6 +389,55 @@ test("typed column storage", function() {
   var row = table.rows[keys[0]];
   assert(row.arg0 === "aapl", "arg0 should be 'aapl', got: " + row.arg0);
   assert(row.arg1 === 187, "arg1 should be 187, got: " + row.arg1);
+  // Plain number: lo == hi, x == null
+  assert(row.arg1_lo === 187, "arg1_lo should be 187");
+  assert(row.arg1_hi === 187, "arg1_hi should be 187");
+  assert(row.arg1_x === null || row.arg1_x === undefined, "arg1_x should be null for plain num");
+});
+
+test("BigDecimal interval stored", function() {
+  var db = new MockDB();
+  var e = new PrologEngine();
+  persist(e, qsqlAdapter(db));
+  e.addClause(compound("price", [atom("btc"), num(67432.5, "67432.50M")]));
+
+  var table = db._tables["q$price$2"];
+  var keys = Object.keys(table.rows);
+  var row = table.rows[keys[0]];
+  assert(row.arg1 === 67432.5, "arg1 primary value");
+  assert(row.arg1_lo < 67432.5, "arg1_lo < val");
+  assert(row.arg1_hi > 67432.5, "arg1_hi > val");
+  assert(row.arg1_x === "67432.50", "arg1_x = exact digits");
+});
+
+test("BigInt interval stored", function() {
+  var db = new MockDB();
+  var e = new PrologEngine();
+  persist(e, qsqlAdapter(db));
+  e.addClause(compound("ts", [num(1710000000, "1710000000N")]));
+
+  var table = db._tables["q$ts$1"];
+  var keys = Object.keys(table.rows);
+  var row = table.rows[keys[0]];
+  assert(row.arg0 === 1710000000, "primary value");
+  assert(typeof row.arg0_lo === "number", "lo is number");
+  assert(typeof row.arg0_hi === "number", "hi is number");
+  assert(row.arg0_x === "1710000000", "x = exact digits");
+});
+
+test("atom has null interval", function() {
+  var db = new MockDB();
+  var e = new PrologEngine();
+  persist(e, qsqlAdapter(db));
+  e.addClause(compound("tag", [atom("btc")]));
+
+  var table = db._tables["q$tag$1"];
+  var keys = Object.keys(table.rows);
+  var row = table.rows[keys[0]];
+  assert(row.arg0 === "btc", "primary value");
+  assert(row.arg0_lo === null || row.arg0_lo === undefined, "lo null for atom");
+  assert(row.arg0_hi === null || row.arg0_hi === undefined, "hi null for atom");
+  assert(row.arg0_x === null || row.arg0_x === undefined, "x null for atom");
 });
 
 test("multiple predicates", function() {

@@ -43,7 +43,7 @@ if [ -z "$1" ] || [ "$1" = "python" ]; then
   if [ -n "$PYTHON" ]; then
     run "Python persist ($PYTHON, 11 tests)" \
       "$PYTHON src/test_persist.py"
-    run "Python QSQL ($PYTHON, 18 tests)" \
+    run "Python QSQL ($PYTHON, 27 tests)" \
       "$PYTHON src/test_qsql.py"
     run "Python QJSON ($PYTHON, 37 tests)" \
       "$PYTHON src/test_qjson.py"
@@ -67,7 +67,7 @@ if [ -z "$1" ] || [ "$1" = "js" ]; then
   if [ -n "$JS" ]; then
     run "JS persist ($JS, 10 tests)" \
       "$JS src/test-persist.js"
-    run "JS QSQL ($JS, 18 tests)" \
+    run "JS QSQL ($JS, 28 tests)" \
       "$JS src/test-qsql.js"
     run "JS store ($JS, 35 tests)" \
       "$JS src/test-store.js"
