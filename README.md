@@ -1,5 +1,7 @@
 # Y@ — Wyatt Ephemeral Reactive Prolog
 
+[![test](https://github.com/wmacevoy/wyatt/actions/workflows/test.yml/badge.svg)](https://github.com/wmacevoy/wyatt/actions/workflows/test.yml)
+
 🤠 *Y'all — lasso your facts, corral your signals.*
 
 A Prolog inference engine with reactive bindings for embedded
