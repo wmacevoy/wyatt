@@ -41,6 +41,12 @@ if [ -z "$1" ] || [ "$1" = "python" ]; then
   elif command -v micropython >/dev/null 2>&1; then PYTHON=micropython
   fi
   if [ -n "$PYTHON" ]; then
+    run "Python persist ($PYTHON, 11 tests)" \
+      "$PYTHON src/test_persist.py"
+    run "Python QJSON ($PYTHON, 37 tests)" \
+      "$PYTHON src/test_qjson.py"
+    run "Python fossilize ($PYTHON, 9 tests)" \
+      "$PYTHON src/test_fossilize.py"
     run "Python vending machine ($PYTHON, 17 tests)" \
       "$PYTHON examples/vending/test.py"
     run "Python message router ($PYTHON, 28 tests)" \
@@ -57,6 +63,12 @@ if [ -z "$1" ] || [ "$1" = "js" ]; then
   elif command -v deno >/dev/null 2>&1; then JS="deno run"
   fi
   if [ -n "$JS" ]; then
+    run "JS persist ($JS, 10 tests)" \
+      "$JS src/test-persist.js"
+    run "JS QJSON ($JS, 25 tests)" \
+      "$JS src/test-qjson.js"
+    run "JS fossilize ($JS, 9 tests)" \
+      "$JS src/test-fossilize.js"
     run "JS vending machine ($JS, 22 tests)" \
       "$JS examples/vending/test.js"
     run "JS margin trading ($JS, 28 tests)" \
@@ -73,7 +85,7 @@ if [ -z "$1" ] || [ "$1" = "js" ]; then
       "$JS src/test-sync-client.js"
     run "JS NNG mesh ($JS, 33 tests)" \
       "$JS examples/nng-mesh/test.js"
-    run "JS greenhouse mesh ($JS, 42 tests)" \
+    run "JS greenhouse mesh ($JS, 52 tests)" \
       "$JS examples/greenhouse/test.js"
     run "JS tutorial ($JS, 27 tests)" \
       "$JS examples/tutorial/test.js"

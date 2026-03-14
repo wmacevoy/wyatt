@@ -50,8 +50,12 @@ Prolog engine (~300 lines) — CPS-based inference with unification, backtrackin
 | `sync.js` | serialize/deserialize terms, SyncEngine | engine |
 | `sync-client.js` | Offline-capable sync client | sync |
 | `tracer.js` | Query execution tracer | engine |
-| `persist.js` / `persist.py` | SQLite/PG persistence: `persist(engine, db)` | engine |
-| `qjson.js` / `qjson.py` | QJSON: JSON + comments + BigInt/BigDecimal/BigFloat | nothing |
+| `persist.js` / `persist.py` | SQLite/PG persistence: `persist(engine, db)` | engine + adapter |
+| `persist-sqlite.js` / `persist_sqlite.py` | SQLite adapter (WAL mode) | sqlite3 |
+| `persist-sqlcipher.js` / `persist_sqlcipher.py` | SQLCipher adapter (encrypted at rest) | sqlcipher |
+| `persist-pg.js` / `persist_pg.py` | PostgreSQL adapter | pg driver |
+| `qjson.js` / `qjson.py` | QJSON: JSON + `N`/`M`/`L` bignums + comments | nothing |
+| `fossilize.js` / `fossilize.py` | Freeze clause DB — injection proof | engine |
 
 The C implementation (`native/prolog_core.c`) uses 32-bit tagged terms and trail-based backtracking for <1ms queries on embedded targets.
 
