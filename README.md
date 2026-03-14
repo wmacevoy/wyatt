@@ -12,7 +12,7 @@ you get the best trigger language nobody asked for.
 Python.  JavaScript.  C.  Same engine, same API, same tests.
 
 ```
-./test.sh          # 23 suites, 600+ tests: C + Python + JavaScript
+./test.sh          # 24 suites, 700+ tests: C + Python + JavaScript
 ```
 
 Zero dependencies.  No package managers.  No build tools.
@@ -233,6 +233,7 @@ infrastructure that Y@ handles so the rules can be the focus.
 ```
 src/
   store.js                Key/value shim — no Prolog needed
+  serve.js                HTTP handler — routes are Prolog rules
   prolog-engine.js        JavaScript engine (~300 lines)
   prolog.py               Python engine
   reactive.js / .py       Signals/memos/effects (~80 lines)
@@ -246,27 +247,21 @@ src/
 
   persist.js / persist.py SQLite/PG persistence — one function call
   persist-sqlite / pg     Adapter trio (sqlite, sqlcipher, pg)
-  qsql.js / qsql.py      QSQL: per-predicate typed columns
+  persist-wasm.js         Bridge: WASM SQLite → persist adapter
+  qsql.js / qsql.py      QSQL: per-predicate typed columns + intervals
   qjson.js / qjson.py     QJSON: JSON + NML bignums + comments
-  fossilize.js / .py      Freeze clause DB — injection proof
+  fossilize.js / .py      fossilize (global) + mineralize (selective)
 
 native/
   wyatt.h / wyatt.c       Embeddable C API (QuickJS + SQLite)
   qjson.h / qjson.c       Native QJSON (arena, 3.5M msg/sec)
   prolog_core.h / .c      32-bit tagged terms + unification
 
-examples/
-  tutorial/               9-step progressive tutorial (30 tests)
-  crypto-sentinel/        BTC price triggers + encrypted storage (31 tests)
-  greenhouse/             Multi-runtime IoT — C + JS + Python (52 tests)
-  nng-mesh/               IoT sensor mesh (40 tests)
-  sync-todo/              Collaborative todos over WebSocket (33 tests)
-  margin/                 Margin trading triggers (28 tests)
-  vending/                Vending machine — Python + JS (39 tests)
-  router/                 IoT message router with failover (28 tests)
-  form/                   SolidJS form validator (browser)
-  tictactoe/              Tic-tac-toe with Prolog AI (browser)
-  adventure/              Text adventure — world as facts (browser)
+wasm/
+  Dockerfile              Emscripten build container
+  wyatt_wasm.c            C helpers for SQLite WASM
+  shim.js                 better-sqlite3-compatible wrapper
+  build.sh                → wasm/dist/sqlite3.{js,wasm}
 
 test.sh                   Runs everything
 ```
@@ -373,6 +368,162 @@ wyatt_close(w);
 Full stack in one binary: QuickJS + SQLite + parser + reactive +
 persist + QJSON + fossilize.  Text in, text out.  ~300 lines of C.
 
+### WASM SQLite for the browser
+
+```bash
+docker compose run --rm wasm-build
+# → wasm/dist/sqlite3.js + sqlite3.wasm (1.2 MB)
+```
+
+```javascript
+var db = await createWasmDb("sqlite3.wasm");
+persist(engine, qsqlAdapter(db));
+// ACID transactions in the browser.  Typed columns.  Interval arithmetic.
+// Swap for SQLCipher WASM → encrypted at rest.  Same API.
+```
+
+### HTTP server (routes are rules)
+
+```javascript
+var handler = createHandler(engine);
+http.createServer(function(req, res) {
+  var r = handler.handleRequest(req.method, req.url, body);
+  res.writeHead(r.status, r.headers);
+  res.end(r.body);
+});
+```
+
+```prolog
+handle(get, '/api/health', _Body, response(200, ok)).
+handle(post, '/api/price', Body, response(403, rejected)) :-
+    field(Body, feed, Feed), \+ trusted_feed(Feed).
+```
+
+Fossilize the rules.  Hash the clause DB.  The SHA-256 IS the
+audit artifact.  No injection.  REST requests are ephemeral.
+
+### fossilize + mineralize
+
+```javascript
+// mineralize: lock specific predicates (rules are gems, data is water)
+mineralize(engine, "threshold", 4);   // thresholds can't change
+mineralize(engine, "react", 0);       // signal handling can't change
+// price/3 still flows freely
+
+// fossilize: lock EVERYTHING (nuclear option, parallel-safe)
+fossilize(engine);
+```
+
+## Examples
+
+The examples tell a progressive story — from first facts to
+encrypted reactive servers.  Each one demonstrates a different
+layer of the stack.  All are tested.
+
+### 1. Tutorial — learn the stack (30 tests)
+
+Nine steps from facts and queries to reactive signals, using a
+smart thermostat.  Start here.
+
+```
+node examples/tutorial/test.js
+```
+
+### 2. Vending machine — policy as rules (39 tests)
+
+12 sensors, 6 product slots, fault detection, credit handling,
+context-sensitive display messages.  Shows how Prolog handles
+the combinatorial explosion of states that if/else can't.
+Python + JavaScript.
+
+```
+python examples/vending/test.py     # 17 tests
+node examples/vending/test.js       # 22 tests
+```
+
+### 3. IoT router — failover logic (28 tests)
+
+Routing across 4 channels (WiFi, Cellular, LoRa, BLE) with
+battery-aware backoff.  ~72 possible states, ~25 Prolog clauses.
+Shows rules replacing a state machine.  Python.
+
+```
+python examples/router/test.py
+```
+
+### 4. Margin trading — exact decimals (28 tests)
+
+Position tracking, P&L, margin ratio thresholds, trigger
+conditions.  QJSON BigDecimal for precise financial math.
+Shows that `0.1 + 0.2 = 0.3M`, not `0.30000000000000004`.
+
+```
+node examples/margin/test.js
+```
+
+### 5. NNG sensor mesh — signal policy (40 tests)
+
+IoT sensor mesh with signal policy layer.  Spoofing protection
+via Prolog unification — `signal(From, reading(From, ...))` forces
+the transport sender to match the claimed origin.  Shows the
+ephemeral/react pattern for accepting or dropping signals.
+
+```
+node examples/nng-mesh/test.js
+```
+
+### 6. Greenhouse — multi-runtime IoT (52 tests)
+
+The full IoT stack: C sensor nodes, JS estimator + dashboard,
+Python gateway.  VPD estimation, reactive alerts, ephemeral/react
+signal policy, cross-runtime fact sync.  Shows that the same
+rules work identically in C, JavaScript, and Python.
+
+```
+node examples/greenhouse/test.js
+```
+
+### 7. Sync-todo — collaborative state (33 tests)
+
+WebSocket fact synchronization.  Shared Prolog rules on server
+and client, SolidJS reactive UI.  Shows offline-first sync with
+snapshot/assert/retract protocol.  Guide for adding encrypted
+storage: `examples/sync-todo/SECURE.md`.
+
+```
+node examples/sync-todo/test.js
+```
+
+### 8. Crypto sentinel — encrypted triggers (57 tests)
+
+BTC/ETH/SOL price monitoring with QJSON exact decimals, Prolog
+threshold triggers, trusted feed authentication, portfolio
+valuation, reactive alerts, QSQL typed storage, SyncEngine
+shared state.  Plus a full REST server where routes are Prolog
+rules, fossilized and hashed for audit.
+
+```
+node examples/crypto-sentinel/test.js          # 31 tests: engine
+node examples/crypto-sentinel/test-server.js   # 26 tests: HTTP handler
+```
+
+### 9. Browser apps — no build step
+
+Three browser demos that run by opening an HTML file.  No npm,
+no bundler, no server.
+
+- **Form validator** — SolidJS signup form with real-time
+  Prolog validation.  Password strength, cross-field dependencies.
+  `open examples/form/index.html`
+
+- **Tic-tac-toe** — Human vs. Prolog AI.  Strategy is entirely
+  rules: win → block → center → corners.
+  `open examples/tictactoe/tictactoe.html`
+
+- **Text adventure** — "The Obsidian Tower."  Rooms, items, NPCs,
+  inventory, dialogue — all Prolog facts and rules.
+  `open examples/adventure/adventure.html`
+
 ## QJSON
 
 JSON superset using QuickJS bignum syntax.
@@ -407,7 +558,8 @@ zero malloc per parse.
 | Node 18+        | `prolog-engine.js` | `reactive.js` | SQLite/PG | `node` |
 | Bun             | `prolog-engine.js` | `reactive.js` | bun:sqlite | `bun` |
 | QuickJS         | `prolog-engine.js` | `reactive.js` | SQLite | `qjs` |
-| Browser         | (inlined)     | (inlined) | — | open `.html` |
+| Browser         | `prolog-engine.js` | `reactive.js` | — | open `.html` |
+| Browser + WASM  | `prolog-engine.js` | `reactive.js` | SQLite WASM | `createWasmDb` |
 | C/C++ (embed)   | `wyatt.c`     | auto-bump | SQLite | link |
 | C (standalone)  | `prolog_core.c` | — | — | link |
 | ESP32/RP2040    | `wyatt.c` or `prolog.py` | yes | SQLite | — |
