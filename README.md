@@ -8,7 +8,7 @@ systems, web apps, and everything in between.
 Python.  JavaScript.  C.  Same engine, same API, same tests.
 
 ```
-./test.sh          # 425 tests: 19 C + 53 Python + 353 JavaScript
+./test.sh          # 514 tests: 19 C + 102 Python + 393 JavaScript
 ```
 
 Zero dependencies.  No package managers.  No build tools.
