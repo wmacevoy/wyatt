@@ -76,14 +76,16 @@ if command -v python3 >/dev/null 2>&1; then
     STATUS=$(curl -s -o /dev/null -w '%{http_code}' "$URL" 2>/dev/null || echo "000")
     if [ "$STATUS" = "200" ]; then
       # Check response body contains engine
-      BODY=$(curl -s "$URL" 2>/dev/null || true)
-      if printf '%s' "$BODY" | grep -q "$engine" 2>/dev/null; then
+      TMPF=$(mktemp)
+      curl -s "$URL" > "$TMPF" 2>/dev/null || true
+      if grep -q "$engine" "$TMPF" 2>/dev/null; then
         echo "  ✓ GET $file → 200 (contains $engine)"
         PASS=$((PASS + 1))
       else
         echo "  ✗ GET $file → 200 but missing $engine"
         FAIL=$((FAIL + 1))
       fi
+      rm -f "$TMPF"
     else
       echo "  ✗ GET $file → $STATUS"
       FAIL=$((FAIL + 1))
