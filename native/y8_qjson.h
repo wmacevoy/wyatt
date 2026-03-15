@@ -106,4 +106,17 @@ void y8_val_project(const y8_val *v, double *lo, double *hi);
    Handles sign, leading zeros, different lengths. No scientific notation. */
 int y8_decimal_cmp(const char *a, int a_len, const char *b, int b_len);
 
+/* Compare two projected values.  Returns -1, 0, or 1.
+   Uses intervals for fast accept/reject, falls through to
+   y8_decimal_cmp only in the overlap zone (~0.001%).
+
+   All six operators: y8_cmp(...) <op> 0.
+
+   For SQL WHERE clauses, expand inline for index usage:
+     a < b  →  (a_hi < b_lo) OR ((a_lo < b_hi) AND cmp(a,b) < 0)
+     a == b →  (a_hi >= b_lo AND b_hi >= a_lo) AND cmp(a,b) = 0
+   See docs/qsql-intervals.md for all operators. */
+int y8_cmp(double a_lo, double a_hi, const char *a_str, int a_len,
+           double b_lo, double b_hi, const char *b_str, int b_len);
+
 #endif

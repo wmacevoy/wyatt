@@ -493,3 +493,14 @@ int y8_decimal_cmp(const char *a, int a_len, const char *b, int b_len) {
     );
     return a_neg ? -cmp : cmp;
 }
+
+/* ── Interval comparison ────────────────────────────────── */
+
+int y8_cmp(double a_lo, double a_hi, const char *a_str, int a_len,
+           double b_lo, double b_hi, const char *b_str, int b_len)
+{
+    if (a_hi < b_lo) return -1;                     /* a definitely < b */
+    if (a_lo > b_hi) return  1;                     /* a definitely > b */
+    if (a_lo == a_hi && b_lo == b_hi) return 0;     /* both exact, same double */
+    return y8_decimal_cmp(a_str, a_len, b_str, b_len);
+}

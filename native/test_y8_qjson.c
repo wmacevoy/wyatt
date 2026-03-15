@@ -260,6 +260,129 @@ static void test_decimal_cmp(void) {
         "9007199254740993", 16) == -1);
 }
 
+/* ── Interval comparison logic ────────────────────────────── */
+/*
+ * Implements the query pushdown formulas from docs/qsql-intervals.md:
+ *   a <op> b = (interval_accept) OR ((interval_not_reject) AND cmp <op> 0)
+ */
+
+/* Helper: project + y8_cmp in one call */
+static int cmp(const char *a, const char *b) {
+    double a_lo, a_hi, b_lo, b_hi;
+    y8_project(a, strlen(a), &a_lo, &a_hi);
+    y8_project(b, strlen(b), &b_lo, &b_hi);
+    return y8_cmp(a_lo, a_hi, a, strlen(a), b_lo, b_hi, b, strlen(b));
+}
+
+#define LT(a, b)  (cmp(a, b) <  0)
+#define LE(a, b)  (cmp(a, b) <= 0)
+#define GT(a, b)  (cmp(a, b) >  0)
+#define GE(a, b)  (cmp(a, b) >= 0)
+#define EQ(a, b)  (cmp(a, b) == 0)
+#define NE(a, b)  (cmp(a, b) != 0)
+
+static void test_interval_cmp(void) {
+    printf("\n=== Interval comparison logic ===\n");
+
+    /* ── Clearly separated (fast accept/reject) ──────────── */
+    TEST("1 < 2",        LT("1", "2"));
+    TEST("2 > 1",        GT("2", "1"));
+    TEST("!(2 < 1)",    !LT("2", "1"));
+    TEST("!(1 > 2)",    !GT("1", "2"));
+    TEST("1 <= 2",       LE("1", "2"));
+    TEST("2 >= 1",       GE("2", "1"));
+    TEST("1 != 2",       NE("1", "2"));
+    TEST("!(1 == 2)",   !EQ("1", "2"));
+
+    /* ── Exact doubles: point intervals ──────────────────── */
+    TEST("42 == 42",     EQ("42", "42"));
+    TEST("42 != 43",     NE("42", "43"));
+    TEST("42 < 43",      LT("42", "43"));
+    TEST("!(42 < 42)",  !LT("42", "42"));
+    TEST("42 <= 42",     LE("42", "42"));
+    TEST("42 >= 42",     GE("42", "42"));
+    TEST("!(42 > 42)",  !GT("42", "42"));
+
+    /* ── Same value, different representation ────────────── */
+    TEST("0.5 == 0.50",        EQ("0.5", "0.50"));
+    TEST("42 == 42.0",         EQ("42", "42.0"));
+    TEST("67432.5 == 67432.50", EQ("67432.5", "67432.50"));
+
+    /* ── Non-exact: same double, different exact values ──── */
+    /* 0.1 and 0.10000000000000000001 both round to the same  */
+    /* double but are different exact values — same interval.  */
+    TEST("0.1 < 0.10000000000000000001",
+        LT("0.1", "0.10000000000000000001"));
+    TEST("0.1 != 0.10000000000000000001",
+        NE("0.1", "0.10000000000000000001"));
+    TEST("!(0.1 == 0.10000000000000000001)",
+        !EQ("0.1", "0.10000000000000000001"));
+    TEST("0.1 <= 0.10000000000000000001",
+        LE("0.1", "0.10000000000000000001"));
+
+    /* ── Overlapping intervals, different values ─────────── */
+    /* 0.1 rounds UP (interval [nextDown, 0.1])              */
+    /* 0.3 rounds DOWN (interval [0.3, nextUp])              */
+    TEST("0.1 < 0.3",   LT("0.1", "0.3"));
+    TEST("0.3 > 0.1",   GT("0.3", "0.1"));
+    TEST("0.1 != 0.3",  NE("0.1", "0.3"));
+
+    /* ── Large integers beyond 2^53 ─────────────────────── */
+    TEST("9007199254740992 < 9007199254740993",
+        LT("9007199254740992", "9007199254740993"));
+    TEST("9007199254740993 > 9007199254740992",
+        GT("9007199254740993", "9007199254740992"));
+    TEST("9007199254740993 == 9007199254740993",
+        EQ("9007199254740993", "9007199254740993"));
+    TEST("9007199254740993 != 9007199254740994",
+        NE("9007199254740993", "9007199254740994"));
+
+    /* ── Negative values ────────────────────────────────── */
+    TEST("-1 < 1",       LT("-1", "1"));
+    TEST("-2 < -1",      LT("-2", "-1"));
+    TEST("-1 > -2",      GT("-1", "-2"));
+    TEST("-0.1 == -0.1", EQ("-0.1", "-0.1"));
+    TEST("-0.1 < 0.1",   LT("-0.1", "0.1"));
+
+    /* ── Overflow / underflow ───────────────────────────── */
+    TEST("1e308 < 2e308",   LT("1e308", "2e308"));
+    TEST("5e-325 < 1e-323", LT("5e-325", "1e-323"));
+    TEST("0 < 5e-325",      LT("0", "5e-325"));
+    TEST("0 == 0",           EQ("0", "0"));
+
+    /* ── Reflexivity: every value equals itself ─────────── */
+    TEST("0.1 == 0.1",      EQ("0.1", "0.1"));
+    TEST("0.3 == 0.3",      EQ("0.3", "0.3"));
+    TEST("!(0.1 < 0.1)",   !LT("0.1", "0.1"));
+    TEST("!(0.1 > 0.1)",   !GT("0.1", "0.1"));
+    TEST("0.1 <= 0.1",      LE("0.1", "0.1"));
+    TEST("0.1 >= 0.1",      GE("0.1", "0.1"));
+
+    /* ── Consistency: < and > are mirrors ───────────────── */
+    TEST("(a<b) == (b>a)",  LT("0.1", "0.3") == GT("0.3", "0.1"));
+    TEST("(a<=b) == (b>=a)", LE("0.1", "0.3") == GE("0.3", "0.1"));
+    TEST("(a==b) == (b==a)", EQ("0.1", "0.3") == EQ("0.3", "0.1"));
+    TEST("(a!=b) == (b!=a)", NE("0.1", "0.3") == NE("0.3", "0.1"));
+
+    /* ── Trichotomy: exactly one of <, ==, > is true ────── */
+    {
+        const char *pairs[][2] = {
+            {"0.1", "0.3"}, {"42", "42"}, {"0.1", "0.1"},
+            {"0.1", "0.10000000000000000001"},
+            {"9007199254740992", "9007199254740993"},
+            {"-0.1", "0.1"}, {"1e308", "2e308"},
+        };
+        for (int i = 0; i < (int)(sizeof(pairs)/sizeof(pairs[0])); i++) {
+            const char *a = pairs[i][0], *b = pairs[i][1];
+            int lt = LT(a, b), eq = EQ(a, b), gt = GT(a, b);
+            char msg[128];
+            snprintf(msg, sizeof(msg), "trichotomy: %s vs %s (%d+%d+%d=1)",
+                     a, b, lt, eq, gt);
+            TEST(msg, lt + eq + gt == 1);
+        }
+    }
+}
+
 /* ── Benchmark ───────────────────────────────────────────── */
 
 static void benchmark(void) {
@@ -330,6 +453,7 @@ int main(void) {
     test_stringify();
     test_project();
     test_decimal_cmp();
+    test_interval_cmp();
     benchmark();
 
     printf("\n%d/%d tests passed\n", pass, pass + fail);
