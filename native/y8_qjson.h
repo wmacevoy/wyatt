@@ -21,6 +21,7 @@ typedef enum {
     Y8_BIGINT,       /* raw string, suffix N */
     Y8_BIGDEC,       /* raw string, suffix M */
     Y8_BIGFLOAT,     /* raw string, suffix L */
+    Y8_BLOB,         /* binary data, 0j prefix (JS64 encoded) */
     Y8_STRING,
     Y8_ARRAY,
     Y8_OBJECT
@@ -39,6 +40,7 @@ struct y8_val {
     union {
         double  num;
         struct { const char *s; int len; } str;   /* string/bignum raw text */
+        struct { const char *data; int len; } blob; /* binary blob data */
         struct { y8_val **items; int count; } arr;
         struct { y8_kv  *pairs; int count; } obj;
     };
@@ -118,5 +120,19 @@ int y8_decimal_cmp(const char *a, int a_len, const char *b, int b_len);
    See docs/qsql-intervals.md for all operators. */
 int y8_cmp(double a_lo, double a_hi, const char *a_str, int a_len,
            double b_lo, double b_hi, const char *b_str, int b_len);
+
+/* ── JS64 encode/decode ─────────────────────────────────── */
+
+/* Decode JS64 characters to raw bytes.
+   Input does NOT include the leading '$' (caller strips it / supplies body only).
+   Internally prepends '$' (6 zero bits) for decoding.
+   Returns number of decoded bytes, or -1 on error.
+   Whitespace in input is skipped. */
+int y8_js64_decode(const char *js64, int js64_len, char *out, int out_cap);
+
+/* Encode raw bytes to JS64 characters.
+   Output does NOT include the leading '$' (caller prepends '0j' for QJSON).
+   Returns number of JS64 characters written, or -1 on error. */
+int y8_js64_encode(const char *data, int data_len, char *out, int out_cap);
 
 #endif

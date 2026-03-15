@@ -6,7 +6,7 @@
 import os, sys
 sys.path.insert(0, os.path.dirname(__file__))
 from decimal import Decimal
-from qjson import parse, stringify, BigInt, BigFloat
+from qjson import parse, stringify, BigInt, BigFloat, Blob, js64_encode, js64_decode
 
 passed = 0
 failed = 0
@@ -273,6 +273,66 @@ test("round-trip BigDecimal", test_roundtrip_bigdecimal)
 test("round-trip BigFloat", test_roundtrip_bigfloat)
 test("round-trip complex", test_roundtrip_complex)
 test("round-trip regular JSON", test_roundtrip_regular_json)
+
+# ── Blob / JS64 tests ──────────────────────────────────────
+
+def test_js64_roundtrip():
+    hello = b"\x48\x65\x6c\x6c\x6f"  # "Hello"
+    enc = js64_encode(hello)
+    dec = js64_decode(enc)
+    assert dec == hello, "round-trip Hello"
+
+def test_js64_empty():
+    enc = js64_encode(b"")
+    assert enc == ""
+    dec = js64_decode("")
+    assert dec == b""
+
+def test_js64_single_byte():
+    enc = js64_encode(b"\xff")
+    dec = js64_decode(enc)
+    assert dec == b"\xff"
+
+def test_blob_parse():
+    hello = b"\x48\x65\x6c\x6c\x6f"
+    enc = js64_encode(hello)
+    obj = parse("0j" + enc)
+    assert isinstance(obj, Blob)
+    assert obj.data == hello
+
+def test_blob_parse_uppercase():
+    enc = js64_encode(b"\x48\x65")
+    obj = parse("0J" + enc)
+    assert isinstance(obj, Blob)
+    assert obj.data == b"\x48\x65"
+
+def test_blob_in_object():
+    enc = js64_encode(b"\x01\x02\x03")
+    obj = parse("{key: 0j" + enc + "}")
+    assert isinstance(obj["key"], Blob)
+    assert obj["key"].data == b"\x01\x02\x03"
+
+def test_blob_stringify_roundtrip():
+    hello = b"\x48\x65\x6c\x6c\x6f"
+    text = stringify(Blob(hello))
+    assert text.startswith("0j"), "starts with 0j"
+    rt = parse(text)
+    assert isinstance(rt, Blob)
+    assert rt.data == hello
+
+def test_blob_empty():
+    obj = parse("0j")
+    assert isinstance(obj, Blob)
+    assert obj.data == b""
+
+test("JS64 round-trip", test_js64_roundtrip)
+test("JS64 empty", test_js64_empty)
+test("JS64 single byte", test_js64_single_byte)
+test("blob parse", test_blob_parse)
+test("blob parse uppercase", test_blob_parse_uppercase)
+test("blob in object", test_blob_in_object)
+test("blob stringify round-trip", test_blob_stringify_roundtrip)
+test("blob empty", test_blob_empty)
 
 print("\n%d tests: %d passed, %d failed" % (passed + failed, passed, failed))
 if failed:

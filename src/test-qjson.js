@@ -5,7 +5,7 @@
 //       bun run src/test-qjson.js
 // ============================================================
 
-import { qjson_parse, qjson_stringify } from './qjson.js';
+import { qjson_parse, qjson_stringify, js64_encode, js64_decode } from './qjson.js';
 
 var passed = 0, failed = 0;
 var hasBigInt = typeof BigInt !== "undefined";
@@ -237,6 +237,74 @@ test("round-trip complex", function() {
   eq(rt.s, "hello");
   assert(rt.a[1] === BigInt(2), "a[1] should be 2n");
   eq(rt.nested.ok, true);
+});
+
+// ── Blob / JS64 tests ──────────────────────────────────────
+
+test("JS64 encode/decode round-trip", function() {
+  var hello = [0x48, 0x65, 0x6c, 0x6c, 0x6f]; // "Hello"
+  var enc = js64_encode(hello);
+  var dec = js64_decode(enc);
+  eq(dec.length, 5);
+  eq(dec[0], 0x48);
+  eq(dec[4], 0x6f);
+});
+
+test("JS64 empty round-trip", function() {
+  var enc = js64_encode([]);
+  eq(enc, "");
+  var dec = js64_decode("");
+  eq(dec.length, 0);
+});
+
+test("JS64 single byte 0xFF", function() {
+  var enc = js64_encode([0xFF]);
+  var dec = js64_decode(enc);
+  eq(dec.length, 1);
+  eq(dec[0], 0xFF);
+});
+
+test("blob parse 0j", function() {
+  var hello = [0x48, 0x65, 0x6c, 0x6c, 0x6f];
+  var enc = js64_encode(hello);
+  var obj = qjson_parse("0j" + enc);
+  eq(obj.$qjson, "blob");
+  eq(obj.data.length, 5);
+  eq(obj.data[0], 0x48);
+  eq(obj.data[4], 0x6f);
+});
+
+test("blob parse 0J (uppercase)", function() {
+  var enc = js64_encode([0x48, 0x65]);
+  var obj = qjson_parse("0J" + enc);
+  eq(obj.$qjson, "blob");
+  eq(obj.data.length, 2);
+});
+
+test("blob in object", function() {
+  var enc = js64_encode([1, 2, 3]);
+  var obj = qjson_parse("{key: 0j" + enc + "}");
+  eq(obj.key.$qjson, "blob");
+  eq(obj.key.data.length, 3);
+  eq(obj.key.data[0], 1);
+});
+
+test("blob stringify round-trip", function() {
+  var hello = [0x48, 0x65, 0x6c, 0x6c, 0x6f];
+  var obj = { $qjson: "blob", data: hello };
+  var text = qjson_stringify(obj);
+  assert(text.indexOf("0j") === 0, "starts with 0j");
+  var rt = qjson_parse(text);
+  eq(rt.$qjson, "blob");
+  eq(rt.data.length, 5);
+  eq(rt.data[0], 0x48);
+  eq(rt.data[4], 0x6f);
+});
+
+test("empty blob parse", function() {
+  var obj = qjson_parse("0j");
+  eq(obj.$qjson, "blob");
+  eq(obj.data.length, 0);
 });
 
 console.log("\n" + (passed + failed) + " tests: " + passed + " passed, " + failed + " failed");

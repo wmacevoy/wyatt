@@ -40,6 +40,100 @@ static char *arena_strdup(y8_arena *a, const char *s, int len) {
     return p;
 }
 
+/* ── JS64 encode/decode ──────────────────────────────────── */
+
+static const char js64_alpha[] = "$0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz";
+
+/* Reverse lookup: ASCII code → 6-bit value (255 = invalid) */
+static unsigned char js64_rev[128] = {0};
+static int js64_rev_init = 0;
+
+static void js64_init_rev(void) {
+    if (js64_rev_init) return;
+    memset(js64_rev, 255, sizeof(js64_rev));
+    for (int i = 0; i < 64; i++) {
+        js64_rev[(unsigned char)js64_alpha[i]] = (unsigned char)i;
+    }
+    js64_rev_init = 1;
+}
+
+int y8_js64_decode(const char *js64, int js64_len, char *out, int out_cap) {
+    js64_init_rev();
+
+    /* Strip whitespace: count valid JS64 chars */
+    /* We process in-place, skipping whitespace */
+    int blob_len;
+    {
+        /* js64_len chars (without leading '$') produce this many bytes */
+        /* First, count non-whitespace chars */
+        int clean_len = 0;
+        for (int i = 0; i < js64_len; i++) {
+            unsigned char c = (unsigned char)js64[i];
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') continue;
+            clean_len++;
+        }
+        blob_len = (clean_len * 3) >> 2;
+    }
+
+    if (blob_len > out_cap) return -1;
+
+    unsigned int code = 0;
+    int bits = 0;
+    int byte_idx = 0;
+
+    for (int i = 0; i < js64_len; i++) {
+        unsigned char c = (unsigned char)js64[i];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') continue;
+        if (c >= 128 || js64_rev[c] == 255) return -1;
+        unsigned int v = js64_rev[c];
+        code = code | (v << bits);
+        bits += 6;
+
+        if (bits >= 8) {
+            if (byte_idx < blob_len) {
+                out[byte_idx] = (char)(code & 0xFF);
+            }
+            code = code >> 8;
+            bits -= 8;
+            byte_idx++;
+        }
+    }
+
+    return blob_len;
+}
+
+int y8_js64_encode(const char *data, int data_len, char *out, int out_cap) {
+    /* Output length (without leading '$'): js64len = ((data_len * 4 + 2) / 3) */
+    int js64len = ((data_len * 4 + 2) / 3);
+    if (js64len > out_cap) return -1;
+
+    /* The full JS64 encoding produces js64len+1 chars (including leading '$').
+       We produce all js64len+1 chars internally but skip the first one ('$'). */
+    unsigned int code = 0;
+    int bits = 6; /* start with 6 zero bits (the implicit '$') */
+    int byte_idx = 0;
+    int out_idx = 0;
+
+    for (int i = 0; i <= js64len; i++) {
+        char ch = js64_alpha[code & 0x3F];
+        if (i > 0) { /* skip the leading '$' */
+            if (out_idx < out_cap) out[out_idx] = ch;
+            out_idx++;
+        }
+        code = code >> 6;
+        bits -= 6;
+        if (bits < 6 || i == js64len) {
+            if (byte_idx < data_len) {
+                code = code | ((unsigned int)(unsigned char)data[byte_idx] << bits);
+                bits += 8;
+                byte_idx++;
+            }
+        }
+    }
+
+    return js64len;
+}
+
 /* ── Parser state ────────────────────────────────────────── */
 
 typedef struct {
@@ -149,11 +243,54 @@ static char *parse_ident(pstate *p, int *out_len) {
     return arena_strdup(p->arena, p->s + start, len);
 }
 
+/* ── Blob parsing (0j prefix → JS64) ─────────────────────── */
+
+static int is_js64_char(char c) {
+    return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
+           (c >= 'a' && c <= 'z') || c == '$' || c == '_';
+}
+
+static y8_val *parse_blob(pstate *p) {
+    /* p->pos is right after the '0j' or '0J' prefix */
+    js64_init_rev();
+
+    /* Collect JS64 characters (allow embedded whitespace) */
+    int start = p->pos;
+    int char_count = 0;
+    while (p->pos < p->len) {
+        char c = p->s[p->pos];
+        if (is_js64_char(c)) { char_count++; p->pos++; }
+        else if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { p->pos++; }
+        else break;
+    }
+
+    /* Decode: char_count JS64 chars → (char_count * 3) >> 2 bytes */
+    int blob_len = (char_count * 3) >> 2;
+    char *data = y8_arena_alloc(p->arena, blob_len > 0 ? blob_len : 1);
+    if (!data) return NULL;
+
+    int js64_span = p->pos - start;
+    int decoded = y8_js64_decode(p->s + start, js64_span, data, blob_len);
+    if (decoded < 0) return NULL;
+
+    y8_val *v = make_val(p, Y8_BLOB);
+    if (v) { v->blob.data = data; v->blob.len = decoded; }
+    return v;
+}
+
 /* ── Number parsing ──────────────────────────────────────── */
 
 static y8_val *parse_number(pstate *p) {
     int start = p->pos;
     if (peek(p) == '-') p->pos++;
+
+    /* Check for 0j / 0J blob prefix */
+    if (p->pos < p->len && p->s[p->pos] == '0' &&
+        p->pos + 1 < p->len && (p->s[p->pos + 1] == 'j' || p->s[p->pos + 1] == 'J')) {
+        p->pos += 2; /* skip '0j' */
+        return parse_blob(p);
+    }
+
     while (p->pos < p->len && p->s[p->pos] >= '0' && p->s[p->pos] <= '9') p->pos++;
     int is_float = 0;
     if (p->pos < p->len && p->s[p->pos] == '.') {
@@ -358,6 +495,15 @@ static int stringify_val(const y8_val *v, char *buf, int pos, int cap) {
     case Y8_BIGFLOAT:
         pos = emit(buf, pos, cap, v->str.s, v->str.len);
         return emit_char(buf, pos, cap, 'L');
+    case Y8_BLOB: {
+        pos = emit(buf, pos, cap, "0j", 2);
+        /* Compute JS64 output length: ((data_len * 4 + 2) / 3) */
+        int enc_len = ((v->blob.len * 4 + 2) / 3);
+        if (pos + enc_len <= cap) {
+            y8_js64_encode(v->blob.data, v->blob.len, buf + pos, enc_len);
+        }
+        return pos + enc_len;
+    }
     case Y8_STRING:
         return emit_str_escaped(buf, pos, cap, v->str.s, v->str.len);
     case Y8_ARRAY:
@@ -430,6 +576,9 @@ void y8_val_project(const y8_val *v, double *lo, double *hi) {
     case Y8_BIGDEC:
     case Y8_BIGFLOAT:
         y8_project(v->str.s, v->str.len, lo, hi);
+        return;
+    case Y8_BLOB:
+        *lo = *hi = 0;
         return;
     default:
         *lo = *hi = 0;

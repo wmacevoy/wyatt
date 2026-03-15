@@ -20,6 +20,60 @@
 //   var s = qjson.stringify(q);
 // ============================================================
 
+// ── JS64 blob encoding ──────────────────────────────────────
+
+var _js64alpha = "$0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz";
+var _js64rev = null;
+
+function _js64_init_rev() {
+  _js64rev = {};
+  for (var i = 0; i < _js64alpha.length; i++) {
+    _js64rev[_js64alpha.charAt(i)] = i;
+  }
+}
+
+function js64_decode(str) {
+  // str does NOT have leading '$' — prepend it for decoding
+  if (_js64rev === null) _js64_init_rev();
+  var js64 = "$" + str;
+  var js64len = js64.length - 1;
+  var blobLen = (js64len * 3) >> 2;
+  var blob = [];
+  var code = 0, bits = 0, byte = 0;
+  for (var i = 0; i < js64len; i++) {
+    var v = _js64rev[js64.charAt(i + 1)];
+    if (v === undefined) throw new Error("Invalid JS64 character");
+    code = code | (v << bits);
+    bits += 6;
+    if (bits >= 8) {
+      blob[byte] = code & 0xFF;
+      code = code >> 8;
+      bits -= 8;
+      byte++;
+    }
+  }
+  return blob;
+}
+
+function js64_encode(blob) {
+  // Returns string WITHOUT leading '$' (for 0j prefix)
+  var js64len = ((blob.length * 4 + 2) / 3) | 0;
+  var parts = [];
+  var code = 0, bits = 6, byte = 0;
+  for (var i = 0; i <= js64len; i++) {
+    var ch = _js64alpha.charAt(code & 0x3F);
+    if (i > 0) parts.push(ch); // skip the leading '$'
+    code = code >> 6;
+    bits -= 6;
+    if (bits < 6 && byte < blob.length) {
+      code = code | (blob[byte] << bits);
+      bits += 8;
+      byte++;
+    }
+  }
+  return parts.join("");
+}
+
 // ── Parser ──────────────────────────────────────────────────
 
 function qjson_parse(text) {
@@ -87,6 +141,7 @@ function qjson_parse(text) {
     if (c === "t") return literal("true", true);
     if (c === "f") return literal("false", false);
     if (c === "n" && text.substr(pos, 4) === "null") return literal("null", null);
+    if (c === "0" && pos + 1 < len && (text[pos + 1] === "j" || text[pos + 1] === "J")) return blob();
     if (c === "-" || (c >= "0" && c <= "9")) return number();
     throw new Error("Unexpected '" + c + "' at " + pos);
   }
@@ -168,6 +223,19 @@ function qjson_parse(text) {
     return n;
   }
 
+  function blob() {
+    pos += 2; // skip 0j / 0J
+    var start = pos;
+    while (pos < len) {
+      var c = text[pos];
+      if ((c >= "0" && c <= "9") || (c >= "A" && c <= "Z") ||
+          (c >= "a" && c <= "z") || c === "$" || c === "_") pos++;
+      else break;
+    }
+    var raw = text.substring(start, pos);
+    return { $qjson: "blob", data: js64_decode(raw) };
+  }
+
   function obj() {
     expect("{");
     var d = {};
@@ -228,6 +296,10 @@ function _fmt(obj) {
     if (obj !== obj || obj === Infinity || obj === -Infinity) return "null";
     return String(obj);
   }
+  // Blob
+  if (typeof obj === "object" && obj !== null && obj.$qjson === "blob") {
+    return "0j" + js64_encode(obj.data);
+  }
   // String
   if (typeof obj === "string") return _esc(obj);
   // Array
@@ -275,5 +347,7 @@ function _esc(s) {
 if (typeof exports !== "undefined") {
   exports.qjson_parse = qjson_parse;
   exports.qjson_stringify = qjson_stringify;
+  exports.js64_encode = js64_encode;
+  exports.js64_decode = js64_decode;
 }
-export { qjson_parse, qjson_stringify };
+export { qjson_parse, qjson_stringify, js64_encode, js64_decode };

@@ -21,6 +21,88 @@
 from decimal import Decimal
 
 
+# ── JS64 blob encoding ──────────────────────────────────────
+
+_JS64_ALPHA = "$0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz"
+_JS64_REV = None
+
+
+def _js64_init_rev():
+    global _JS64_REV
+    _JS64_REV = {}
+    for i, c in enumerate(_JS64_ALPHA):
+        _JS64_REV[c] = i
+
+
+def js64_decode(s):
+    """Decode JS64 string (without leading '$') to bytes."""
+    if _JS64_REV is None:
+        _js64_init_rev()
+    js64 = "$" + s  # restore the implicit leading '$'
+    js64_len = len(js64) - 1
+    blob_len = (js64_len * 3) >> 2
+    blob = bytearray(blob_len)
+    code = 0
+    bits = 0
+    byte_idx = 0
+    for i in range(js64_len):
+        v = _JS64_REV.get(js64[i + 1])
+        if v is None:
+            raise ValueError("Invalid JS64 character: %r" % js64[i + 1])
+        code = code | (v << bits)
+        bits += 6
+        if bits >= 8:
+            if byte_idx < blob_len:
+                blob[byte_idx] = code & 0xFF
+            code = code >> 8
+            bits -= 8
+            byte_idx += 1
+    return bytes(blob)
+
+
+def js64_encode(data):
+    """Encode bytes to JS64 string (without leading '$', for 0j prefix)."""
+    if isinstance(data, (bytes, bytearray)):
+        data = list(data)
+    js64_len = ((len(data) * 4 + 2) // 3)
+    parts = []
+    code = 0
+    bits = 6  # start with 6 zero bits (the implicit '$')
+    byte_idx = 0
+    for i in range(js64_len + 1):
+        ch = _JS64_ALPHA[code & 0x3F]
+        if i > 0:  # skip the leading '$'
+            parts.append(ch)
+        code = code >> 6
+        bits -= 6
+        if bits < 6 and byte_idx < len(data):
+            code = code | (data[byte_idx] << bits)
+            bits += 8
+            byte_idx += 1
+    return "".join(parts)
+
+
+class Blob:
+    """Binary data that round-trips through QJSON with 0j prefix (JS64)."""
+    __slots__ = ("data",)
+
+    def __init__(self, data):
+        if isinstance(data, (list, tuple)):
+            data = bytes(data)
+        self.data = bytes(data)
+
+    def __eq__(self, other):
+        if isinstance(other, Blob):
+            return self.data == other.data
+        return NotImplemented
+
+    def __hash__(self):
+        return hash(("Blob", self.data))
+
+    def __repr__(self):
+        return "Blob(%r)" % self.data
+
+
 class BigInt(int):
     """Integer that round-trips through QJSON with 'n' suffix."""
     pass
@@ -144,6 +226,8 @@ class _Parser:
         if c == "f":  return self.literal("false", False)
         if c == "n" and self.text[self.pos:self.pos + 4] == "null":
             return self.literal("null", None)
+        if c == "0" and self.pos + 1 < self.end and self.text[self.pos + 1] in "jJ":
+            return self.blob()
         if c == "-" or c.isdigit():
             return self.number()
         raise ValueError("Unexpected '%s' at %d" % (c, self.pos))
@@ -220,6 +304,15 @@ class _Parser:
             return float(raw)
         return int(raw)
 
+    def blob(self):
+        self.pos += 2  # skip 0j / 0J
+        start = self.pos
+        js64_chars = set(_JS64_ALPHA)
+        while self.pos < self.end and self.text[self.pos] in js64_chars:
+            self.pos += 1
+        raw = self.text[start:self.pos]
+        return Blob(js64_decode(raw))
+
     def obj(self):
         self.expect("{")
         d = {}
@@ -277,6 +370,8 @@ def _fmt(obj, ind, depth):
         return "true"
     if obj is False:
         return "false"
+    if isinstance(obj, Blob):
+        return "0j" + js64_encode(obj.data)
     if isinstance(obj, BigFloat):
         return obj._raw + "L"
     if isinstance(obj, BigInt):

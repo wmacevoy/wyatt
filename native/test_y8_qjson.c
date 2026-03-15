@@ -383,6 +383,131 @@ static void test_interval_cmp(void) {
     }
 }
 
+/* ── Blob / JS64 tests ───────────────────────────────────── */
+
+static void test_js64_encode_decode(void) {
+    printf("\n=== JS64 encode/decode ===\n");
+    char enc[64], dec[64];
+
+    /* "Hello" = 0x48 0x65 0x6c 0x6c 0x6f */
+    const char hello[] = {0x48, 0x65, 0x6c, 0x6c, 0x6f};
+    int enc_len = y8_js64_encode(hello, 5, enc, sizeof(enc));
+    TEST("js64 encode Hello len", enc_len == 7); /* ((5*4+2)/3) = 7 */
+
+    /* Decode back */
+    int dec_len = y8_js64_decode(enc, enc_len, dec, sizeof(dec));
+    TEST("js64 decode Hello len", dec_len == 5);
+    TEST("js64 round-trip Hello", dec_len == 5 && memcmp(dec, hello, 5) == 0);
+
+    /* Empty data */
+    enc_len = y8_js64_encode("", 0, enc, sizeof(enc));
+    TEST("js64 encode empty", enc_len == 0);
+    dec_len = y8_js64_decode(enc, 0, dec, sizeof(dec));
+    TEST("js64 decode empty", dec_len == 0);
+
+    /* Single byte: 0xFF */
+    const char ff[] = {(char)0xFF};
+    enc_len = y8_js64_encode(ff, 1, enc, sizeof(enc));
+    TEST("js64 encode 0xFF len", enc_len == 2); /* ((1*4+2)/3) = 2 */
+    dec_len = y8_js64_decode(enc, enc_len, dec, sizeof(dec));
+    TEST("js64 round-trip 0xFF", dec_len == 1 && (unsigned char)dec[0] == 0xFF);
+
+    /* All zeros: 3 bytes */
+    const char zeros[3] = {0, 0, 0};
+    enc_len = y8_js64_encode(zeros, 3, enc, sizeof(enc));
+    TEST("js64 encode 3 zeros len", enc_len == 4); /* ((3*4+2)/3) = 4 */
+    dec_len = y8_js64_decode(enc, enc_len, dec, sizeof(dec));
+    TEST("js64 round-trip 3 zeros", dec_len == 3 &&
+         dec[0] == 0 && dec[1] == 0 && dec[2] == 0);
+}
+
+static void test_parse_blob(void) {
+    printf("\n=== Parse blob ===\n");
+    y8_arena a; y8_arena_init(&a, arena_buf, sizeof(arena_buf));
+    char out[256];
+
+    /* First, encode "Hello" to know the expected JS64 body */
+    const char hello[] = {0x48, 0x65, 0x6c, 0x6c, 0x6f};
+    char js64_body[16];
+    int js64_len = y8_js64_encode(hello, 5, js64_body, sizeof(js64_body));
+    /* Build "0j<body>" string */
+    char input[32];
+    memcpy(input, "0j", 2);
+    memcpy(input + 2, js64_body, js64_len);
+    int input_len = 2 + js64_len;
+
+    y8_val *v = y8_parse(&a, input, input_len);
+    TEST("parse blob type", v && v->type == Y8_BLOB);
+    TEST("parse blob len", v && v->blob.len == 5);
+    TEST("parse blob data", v && v->blob.len == 5 && memcmp(v->blob.data, hello, 5) == 0);
+
+    /* Uppercase J */
+    y8_arena_reset(&a);
+    memcpy(input, "0J", 2);
+    v = y8_parse(&a, input, input_len);
+    TEST("parse blob 0J (uppercase)", v && v->type == Y8_BLOB && v->blob.len == 5 &&
+         memcmp(v->blob.data, hello, 5) == 0);
+
+    /* Whitespace in JS64 body */
+    y8_arena_reset(&a);
+    {
+        char ws_input[64];
+        int wi = 0;
+        ws_input[wi++] = '0';
+        ws_input[wi++] = 'j';
+        /* Insert a space after every 3 chars */
+        for (int i = 0; i < js64_len; i++) {
+            ws_input[wi++] = js64_body[i];
+            if (i == 2) ws_input[wi++] = ' ';
+        }
+        v = y8_parse(&a, ws_input, wi);
+        TEST("parse blob with whitespace", v && v->type == Y8_BLOB && v->blob.len == 5 &&
+             memcmp(v->blob.data, hello, 5) == 0);
+    }
+
+    /* Empty blob: 0j with no chars */
+    y8_arena_reset(&a);
+    v = y8_parse(&a, "0j", 2);
+    TEST("parse empty blob", v && v->type == Y8_BLOB && v->blob.len == 0);
+
+    /* Stringify round-trip */
+    y8_arena_reset(&a);
+    v = y8_parse(&a, input, input_len); /* the Hello blob */
+    int n = y8_stringify(v, out, sizeof(out));
+    TEST("stringify blob prefix", n > 2 && out[0] == '0' && out[1] == 'j');
+    /* Parse the stringified output back */
+    y8_arena_reset(&a);
+    y8_val *v2 = y8_parse(&a, out, n);
+    TEST("stringify blob round-trip type", v2 && v2->type == Y8_BLOB);
+    TEST("stringify blob round-trip data", v2 && v2->blob.len == 5 &&
+         memcmp(v2->blob.data, hello, 5) == 0);
+
+    /* Blob inside object */
+    y8_arena_reset(&a);
+    {
+        char obj_input[64];
+        int oi = 0;
+        memcpy(obj_input + oi, "{key: 0j", 8); oi += 8;
+        memcpy(obj_input + oi, js64_body, js64_len); oi += js64_len;
+        obj_input[oi++] = '}';
+        v = y8_parse(&a, obj_input, oi);
+        TEST("blob in object", v && v->type == Y8_OBJECT);
+        y8_val *bv = y8_obj_get(v, "key");
+        TEST("blob in object type", bv && bv->type == Y8_BLOB);
+        TEST("blob in object data", bv && bv->blob.len == 5 &&
+             memcmp(bv->blob.data, hello, 5) == 0);
+    }
+
+    /* Blob projection: lo = hi = 0 */
+    y8_arena_reset(&a);
+    v = y8_parse(&a, input, input_len);
+    {
+        double lo, hi;
+        y8_val_project(v, &lo, &hi);
+        TEST("blob projection zero", lo == 0.0 && hi == 0.0);
+    }
+}
+
 /* ── Benchmark ───────────────────────────────────────────── */
 
 static void benchmark(void) {
@@ -454,6 +579,8 @@ int main(void) {
     test_project();
     test_decimal_cmp();
     test_interval_cmp();
+    test_js64_encode_decode();
+    test_parse_blob();
     benchmark();
 
     printf("\n%d/%d tests passed\n", pass, pass + fail);
