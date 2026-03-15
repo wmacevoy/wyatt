@@ -8,13 +8,8 @@
 // ============================================================
 
 import { parseProgram } from "./parser.js";
-import { createRequire as _createRequire } from "module";
 
-var _cjsRequire = (typeof require !== "undefined")
-  ? require
-  : (typeof _createRequire === "function" && typeof import.meta !== "undefined")
-    ? _createRequire(import.meta.url)
-    : null;
+var _cjsRequire = (typeof require !== "undefined") ? require : null;
 
 // ── loadString ──────────────────────────────────────────────
 // Parse text as a Prolog program and add each clause to engine.
