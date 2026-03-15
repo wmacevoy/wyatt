@@ -1,8 +1,144 @@
-/**
- * Bundled by jsDelivr using Rollup v2.79.2 and Terser v5.39.0.
- * Original file: /npm/solid-js@1.9.5/h/dist/h.js
- *
- * Do NOT use SRI with dynamically generated files! More information: https://www.jsdelivr.com/using-sri-with-dynamic-files
- */
-import{spread as e,assign as t,insert as n,createComponent as r,dynamicProperty as o,SVGElements as s}from"/npm/solid-js@1.9.5/web/+esm";const l=Symbol("hyper-element");const i=function(e){function t(){let n,r=[].slice.call(arguments),o=[],s=!1;for(;Array.isArray(r[0]);)r=r[0];r[0][l]&&r.unshift(t.Fragment),"string"==typeof r[0]&&function e(t){for(let n=1;n<t.length;n++){if("function"==typeof t[n])return void(s=!0);Array.isArray(t[n])&&e(t[n])}}(r);const i=()=>{for(;r.length;)c(r.shift());return n instanceof Element&&o.length&&n.classList.add(...o),n};return i[l]=!0,i;function c(t){const i=typeof t;if(null==t);else if("string"===i)n?n.appendChild(document.createTextNode(t)):function(t){const r=t.split(/([\.#]?[^\s#.]+)/);/^\.|#/.test(r[1])&&(n=document.createElement("div"));for(let t=0;t<r.length;t++){const s=r[t],l=s.substring(1,s.length);s&&(n?"."===s[0]?o.push(l):"#"===s[0]&&n.setAttribute("id",l):n=e.SVGElements.has(s)?document.createElementNS("http://www.w3.org/2000/svg",s):document.createElement(s))}}(t);else if("number"===i||"boolean"===i||"bigint"===i||"symbol"===i||t instanceof Date||t instanceof RegExp)n.appendChild(document.createTextNode(t.toString()));else if(Array.isArray(t))for(let e=0;e<t.length;e++)c(t[e]);else if(t instanceof Element)e.insert(n,t,s?null:void 0);else if("object"===i){let s=!1;const l=Object.getOwnPropertyDescriptors(t);for(const n in l){if("class"===n&&0!==o.length){const e=o.join(" "),r="function"==typeof l.class.value?()=>e+" "+l.class.value():e+" "+t.class;Object.defineProperty(t,"class",{...l[n],value:r}),o=[]}"ref"!==n&&"on"!==n.slice(0,2)&&"function"==typeof l[n].value?(e.dynamicProperty(t,n),s=!0):l[n].get&&(s=!0)}s?e.spread(n,t,n instanceof SVGElement,!!r.length):e.assign(n,t,n instanceof SVGElement,!!r.length)}else if("function"===i)if(n){for(;t[l];)t=t();e.insert(n,t,s?null:void 0)}else{let o,s=r[0];null!=s&&("object"!=typeof s||Array.isArray(s)||s instanceof Element)||(o=r.shift()),o||(o={}),r.length&&(o.children=r.length>1?r:r[0]);const i=Object.getOwnPropertyDescriptors(o);for(const t in i)if(Array.isArray(i[t].value)){const n=i[t].value;o[t]=()=>{for(let e=0;e<n.length;e++)for(;n[e][l];)n[e]=n[e]();return n},e.dynamicProperty(o,t)}else"function"!=typeof i[t].value||i[t].value.length||e.dynamicProperty(o,t);n=e.createComponent(t,o),r=[]}}}return t.Fragment=e=>e.children,t}({spread:e,assign:t,insert:n,createComponent:r,dynamicProperty:o,SVGElements:s});export{i as default};
-//# sourceMappingURL=/sm/f098295c20abc5a68240633c9b631d665edf852a066cb7057a73414917d59633.map
+import {
+  spread,
+  assign,
+  insert,
+  createComponent,
+  dynamicProperty,
+  SVGElements
+} from "solid-js/web";
+
+const $ELEMENT = Symbol("hyper-element");
+function createHyperScript(r) {
+  function h() {
+    let args = [].slice.call(arguments),
+      e,
+      classes = [],
+      multiExpression = false;
+    while (Array.isArray(args[0])) args = args[0];
+    if (args[0][$ELEMENT]) args.unshift(h.Fragment);
+    typeof args[0] === "string" && detectMultiExpression(args);
+    const ret = () => {
+      while (args.length) item(args.shift());
+      if (e instanceof Element && classes.length) e.classList.add(...classes);
+      return e;
+    };
+    ret[$ELEMENT] = true;
+    return ret;
+    function item(l) {
+      const type = typeof l;
+      if (l == null);
+      else if ("string" === type) {
+        if (!e) parseClass(l);
+        else e.appendChild(document.createTextNode(l));
+      } else if (
+        "number" === type ||
+        "boolean" === type ||
+        "bigint" === type ||
+        "symbol" === type ||
+        l instanceof Date ||
+        l instanceof RegExp
+      ) {
+        e.appendChild(document.createTextNode(l.toString()));
+      } else if (Array.isArray(l)) {
+        for (let i = 0; i < l.length; i++) item(l[i]);
+      } else if (l instanceof Element) {
+        r.insert(e, l, multiExpression ? null : undefined);
+      } else if ("object" === type) {
+        let dynamic = false;
+        const d = Object.getOwnPropertyDescriptors(l);
+        for (const k in d) {
+          if (k === "class" && classes.length !== 0) {
+            const fixedClasses = classes.join(" "),
+              value =
+                typeof d["class"].value === "function"
+                  ? () => fixedClasses + " " + d["class"].value()
+                  : fixedClasses + " " + l["class"];
+            Object.defineProperty(l, "class", {
+              ...d[k],
+              value
+            });
+            classes = [];
+          }
+          if (k !== "ref" && k.slice(0, 2) !== "on" && typeof d[k].value === "function") {
+            r.dynamicProperty(l, k);
+            dynamic = true;
+          } else if (d[k].get) dynamic = true;
+        }
+        dynamic
+          ? r.spread(e, l, e instanceof SVGElement, !!args.length)
+          : r.assign(e, l, e instanceof SVGElement, !!args.length);
+      } else if ("function" === type) {
+        if (!e) {
+          let props,
+            next = args[0];
+          if (
+            next == null ||
+            (typeof next === "object" && !Array.isArray(next) && !(next instanceof Element))
+          )
+            props = args.shift();
+          props || (props = {});
+          if (args.length) {
+            props.children = args.length > 1 ? args : args[0];
+          }
+          const d = Object.getOwnPropertyDescriptors(props);
+          for (const k in d) {
+            if (Array.isArray(d[k].value)) {
+              const list = d[k].value;
+              props[k] = () => {
+                for (let i = 0; i < list.length; i++) {
+                  while (list[i][$ELEMENT]) list[i] = list[i]();
+                }
+                return list;
+              };
+              r.dynamicProperty(props, k);
+            } else if (typeof d[k].value === "function" && !d[k].value.length)
+              r.dynamicProperty(props, k);
+          }
+          e = r.createComponent(l, props);
+          args = [];
+        } else {
+          while (l[$ELEMENT]) l = l();
+          r.insert(e, l, multiExpression ? null : undefined);
+        }
+      }
+    }
+    function parseClass(string) {
+      const m = string.split(/([\.#]?[^\s#.]+)/);
+      if (/^\.|#/.test(m[1])) e = document.createElement("div");
+      for (let i = 0; i < m.length; i++) {
+        const v = m[i],
+          s = v.substring(1, v.length);
+        if (!v) continue;
+        if (!e)
+          e = r.SVGElements.has(v)
+            ? document.createElementNS("http://www.w3.org/2000/svg", v)
+            : document.createElement(v);
+        else if (v[0] === ".") classes.push(s);
+        else if (v[0] === "#") e.setAttribute("id", s);
+      }
+    }
+    function detectMultiExpression(list) {
+      for (let i = 1; i < list.length; i++) {
+        if (typeof list[i] === "function") {
+          multiExpression = true;
+          return;
+        } else if (Array.isArray(list[i])) {
+          detectMultiExpression(list[i]);
+        }
+      }
+    }
+  }
+  h.Fragment = props => props.children;
+  return h;
+}
+
+const h = createHyperScript({
+  spread,
+  assign,
+  insert,
+  createComponent,
+  dynamicProperty,
+  SVGElements
+});
+
+export { h as default };

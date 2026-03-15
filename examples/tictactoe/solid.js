@@ -1,8 +1,1905 @@
-/**
- * Bundled by jsDelivr using Rollup v2.79.2 and Terser v5.39.0.
- * Original file: /npm/solid-js@1.9.5/dist/solid.js
- *
- * Do NOT use SRI with dynamically generated files! More information: https://www.jsdelivr.com/using-sri-with-dynamic-files
- */
-let e=1,t=!1,n=!1,o=[],r=null,s=null,u=0,l=null,c=null;function i(r,i){l||function(){const e=new MessageChannel,t=e.port2;if(l=()=>t.postMessage(null),e.port1.onmessage=()=>{if(null!==c){const e=performance.now();u=e+5;const n=!0;try{c(n,e)?t.postMessage(null):c=null}catch(e){throw t.postMessage(null),e}}},navigator&&navigator.scheduling&&navigator.scheduling.isInputPending){const e=navigator.scheduling;s=()=>{const t=performance.now();return t>=u&&(!!e.isInputPending()||t>=300)}}else s=()=>performance.now()>=u}();let a=performance.now(),d=1073741823;i&&i.timeout&&(d=i.timeout);const h={id:e++,fn:r,startTime:a,expirationTime:a+d};return function(e,t){e.splice(function(){let n=0,o=e.length-1;for(;n<=o;){const r=o+n>>1,s=t.expirationTime-e[r].expirationTime;if(s>0)n=r+1;else{if(!(s<0))return r;o=r-1}}return n}(),0,t)}(o,h),t||n||(t=!0,c=f,l()),h}function a(e){e.fn=null}function f(e,u){t=!1,n=!0;try{return function(e,t){let n=t;r=o[0]||null;for(;null!==r&&(!(r.expirationTime>n)||e&&!s());){const e=r.fn;if(null!==e){r.fn=null;e(r.expirationTime<=n),n=performance.now(),r===o[0]&&o.shift()}else o.shift();r=o[0]||null}return null!==r}(e,u)}finally{r=null,n=!1}}const d={context:void 0,registry:void 0,effects:void 0,done:!1,getContextId(){return h(this.context.count)},getNextContextId(){return h(this.context.count++)}};function h(e){const t=String(e),n=t.length-1;return d.context.id+(n?String.fromCharCode(96+n):"")+t}function p(e){d.context=e}const g=(e,t)=>e===t,v=Symbol("solid-proxy"),b="function"==typeof Proxy,w=Symbol("solid-track"),y=Symbol("solid-dev-component"),x={equals:g};let k=null,S=we;const m=1,O=2,A={owned:null,cleanups:null,context:null,owner:null},P={};var F=null;let j=null,C=null,V=null,q=null,M=null,I=null,E=0;function T(e,t){const n=q,o=F,r=0===e.length,s=void 0===t?o:t,u=r?A:{owned:null,cleanups:null,context:s?s.context:null,owner:s},l=r?e:()=>e((()=>G((()=>Se(u)))));F=u,q=null;try{return be(l,!0)}finally{q=n,F=o}}function $(e,t){const n={value:e,observers:null,observerSlots:null,comparator:(t=t?Object.assign({},x,t):x).equals||void 0};return[fe.bind(n),e=>("function"==typeof e&&(e=j&&j.running&&j.sources.has(n)?e(n.tValue):e(n.value)),de(n,e))]}function N(e,t,n){const o=ge(e,t,!0,m);C&&j&&j.running?M.push(o):he(o)}function _(e,t,n){const o=ge(e,t,!1,m);C&&j&&j.running?M.push(o):he(o)}function z(e,t,n){S=ye;const o=ge(e,t,!1,m),r=ce&&ue(ce);r&&(o.suspense=r),n&&n.render||(o.user=!0),I?I.push(o):he(o)}function D(e,t){let n;const o=ge((()=>{n?n():G(e),n=void 0}),void 0,!1,0),r=ce&&ue(ce);return r&&(o.suspense=r),o.user=!0,e=>{n=e,he(o)}}function H(e,t,n){n=n?Object.assign({},x,n):x;const o=ge(e,t,!0,0);return o.observers=null,o.observerSlots=null,o.comparator=n.equals||void 0,C&&j&&j.running?(o.tState=m,M.push(o)):he(o),fe.bind(o)}function K(e,t,n){let o,r,s;"function"==typeof t?(o=e,r=t,s=n||{}):(o=!0,r=e,s=t||{});let u=null,l=P,c=null,i=!1,a=!1,f="initialValue"in s,h="function"==typeof o&&H(o);const p=new Set,[g,v]=(s.storage||$)(s.initialValue),[b,w]=$(void 0),[y,x]=$(void 0,{equals:!1}),[k,S]=$(f?"ready":"unresolved");function m(e,t,n,o){return u===e&&(u=null,void 0!==o&&(f=!0),e!==l&&t!==l||!s.onHydrated||queueMicrotask((()=>s.onHydrated(o,{value:t}))),l=P,j&&e&&i?(j.promises.delete(e),i=!1,be((()=>{j.running=!0,O(t,n)}),!1)):O(t,n)),t}function O(e,t){be((()=>{void 0===t&&v((()=>e)),S(void 0!==t?"errored":f?"ready":"unresolved"),w(t);for(const e of p.keys())e.decrement();p.clear()}),!1)}function A(){const e=ce&&ue(ce),t=g(),n=b();if(void 0!==n&&!u)throw n;return q&&!q.user&&e&&N((()=>{y(),u&&(e.resolved&&j&&i?j.promises.add(u):p.has(e)||(e.increment(),p.add(e)))})),t}function F(e=!0){if(!1!==e&&a)return;a=!1;const t=h?h():o;if(i=j&&j.running,null==t||!1===t)return void m(u,G(g));j&&u&&j.promises.delete(u);const n=l!==P?l:G((()=>r(t,{value:g(),refetching:e})));return(s=n)&&"object"==typeof s&&"then"in s?(u=n,"value"in n?("success"===n.status?m(u,n.value,void 0,t):m(u,void 0,Oe(n.value),t),n):(a=!0,queueMicrotask((()=>a=!1)),be((()=>{S(f?"refreshing":"pending"),x()}),!1),n.then((e=>m(n,e,void 0,t)),(e=>m(n,void 0,Oe(e),t))))):(m(u,n,void 0,t),n);var s}return d.context&&(c=d.getNextContextId(),"initial"===s.ssrLoadFrom?l=s.initialValue:d.load&&d.has(c)&&(l=d.load(c))),Object.defineProperties(A,{state:{get:()=>k()},error:{get:()=>b()},loading:{get(){const e=k();return"pending"===e||"refreshing"===e}},latest:{get(){if(!f)return A();const e=b();if(e&&!u)throw e;return g()}}}),h?N((()=>F(!1))):F(!1),[A,{refetch:F,mutate:v}]}function L(e,t){let n,o=t?t.timeoutMs:void 0;const r=ge((()=>(n&&n.fn||(n=i((()=>u((()=>r.value))),void 0!==o?{timeout:o}:void 0)),e())),void 0,!0),[s,u]=$(j&&j.running&&j.sources.has(r)?r.tValue:r.value,t);return he(r),u((()=>j&&j.running&&j.sources.has(r)?r.tValue:r.value)),s}function U(e,t=g,n){const o=new Map,r=ge((n=>{const r=e();for(const[e,s]of o.entries())if(t(e,r)!==t(e,n))for(const e of s.values())e.state=m,e.pure?M.push(e):I.push(e);return r}),void 0,!0,m);return he(r),e=>{const n=q;if(n){let t;(t=o.get(e))?t.add(n):o.set(e,t=new Set([n])),R((()=>{t.delete(n),!t.size&&o.delete(e)}))}return t(e,j&&j.running&&j.sources.has(r)?r.tValue:r.value)}}function B(e){return be(e,!1)}function G(e){if(!V&&null===q)return e();const t=q;q=null;try{return V?V.untrack(e):e()}finally{q=t}}function J(e,t,n){const o=Array.isArray(e);let r,s=n&&n.defer;return n=>{let u;if(o){u=Array(e.length);for(let t=0;t<e.length;t++)u[t]=e[t]()}else u=e();if(s)return s=!1,n;const l=G((()=>t(u,r,n)));return r=u,l}}function Q(e){z((()=>G(e)))}function R(e){return null===F||(null===F.cleanups?F.cleanups=[e]:F.cleanups.push(e)),e}function W(e,t){k||(k=Symbol("error")),(F=ge(void 0,void 0,!0)).context={...F.context,[k]:[t]},j&&j.running&&j.sources.add(F);try{return e()}catch(e){Pe(e)}finally{F=F.owner}}function X(){return q}function Y(){return F}function Z(e,t){const n=F,o=q;F=e,q=null;try{return be(t,!0)}catch(e){Pe(e)}finally{F=n,q=o}}function ee(e=i){C=e}function te(e){if(j&&j.running)return e(),j.done;const t=q,n=F;return Promise.resolve().then((()=>{let o;return q=t,F=n,(C||ce)&&(o=j||(j={sources:new Set,effects:[],promises:new Set,disposed:new Set,queue:new Set,running:!0}),o.done||(o.done=new Promise((e=>o.resolve=e))),o.running=!0),be(e,!1),q=F=null,o?o.done:void 0}))}const[ne,oe]=$(!1);function re(){return[ne,te]}function se(e,t){const n=Symbol("context");return{id:n,Provider:je(n),defaultValue:e}}function ue(e){let t;return F&&F.context&&void 0!==(t=F.context[e.id])?t:e.defaultValue}function le(e){const t=H(e),n=H((()=>Fe(t())));return n.toArray=()=>{const e=n();return Array.isArray(e)?e:null!=e?[e]:[]},n}let ce;function ie(){return ce||(ce=se())}function ae(e,t=e=>e()){if(V){const{factory:n,untrack:o}=V;V={factory:(t,o)=>{const r=n(t,o),s=e((e=>r.track(e)),o);return{track:e=>s.track(e),dispose(){s.dispose(),r.dispose()}}},untrack:e=>o((()=>t(e)))}}else V={factory:e,untrack:t}}function fe(){const e=j&&j.running;if(this.sources&&(e?this.tState:this.state))if((e?this.tState:this.state)===m)he(this);else{const e=M;M=null,be((()=>xe(this)),!1),M=e}if(q){const e=this.observers?this.observers.length:0;q.sources?(q.sources.push(this),q.sourceSlots.push(e)):(q.sources=[this],q.sourceSlots=[e]),this.observers?(this.observers.push(q),this.observerSlots.push(q.sources.length-1)):(this.observers=[q],this.observerSlots=[q.sources.length-1])}return e&&j.sources.has(this)?this.tValue:this.value}function de(e,t,n){let o=j&&j.running&&j.sources.has(e)?e.tValue:e.value;if(!e.comparator||!e.comparator(o,t)){if(j){const o=j.running;(o||!n&&j.sources.has(e))&&(j.sources.add(e),e.tValue=t),o||(e.value=t)}else e.value=t;e.observers&&e.observers.length&&be((()=>{for(let t=0;t<e.observers.length;t+=1){const n=e.observers[t],o=j&&j.running;o&&j.disposed.has(n)||((o?n.tState:n.state)||(n.pure?M.push(n):I.push(n),n.observers&&ke(n)),o?n.tState=m:n.state=m)}if(M.length>1e6)throw M=[],new Error}),!1)}return t}function he(e){if(!e.fn)return;Se(e);const t=E;pe(e,j&&j.running&&j.sources.has(e)?e.tValue:e.value,t),j&&!j.running&&j.sources.has(e)&&queueMicrotask((()=>{be((()=>{j&&(j.running=!0),q=F=e,pe(e,e.tValue,t),q=F=null}),!1)}))}function pe(e,t,n){let o;const r=F,s=q;q=F=e;try{o=e.fn(t)}catch(t){return e.pure&&(j&&j.running?(e.tState=m,e.tOwned&&e.tOwned.forEach(Se),e.tOwned=void 0):(e.state=m,e.owned&&e.owned.forEach(Se),e.owned=null)),e.updatedAt=n+1,Pe(t)}finally{q=s,F=r}(!e.updatedAt||e.updatedAt<=n)&&(null!=e.updatedAt&&"observers"in e?de(e,o,!0):j&&j.running&&e.pure?(j.sources.add(e),e.tValue=o):e.value=o,e.updatedAt=n)}function ge(e,t,n,o=m,r){const s={fn:e,state:o,updatedAt:null,owned:null,sources:null,sourceSlots:null,cleanups:null,value:t,owner:F,context:F?F.context:null,pure:n};if(j&&j.running&&(s.state=0,s.tState=o),null===F||F!==A&&(j&&j.running&&F.pure?F.tOwned?F.tOwned.push(s):F.tOwned=[s]:F.owned?F.owned.push(s):F.owned=[s]),V&&s.fn){const[e,t]=$(void 0,{equals:!1}),n=V.factory(s.fn,t);R((()=>n.dispose()));const o=()=>te(t).then((()=>r.dispose())),r=V.factory(s.fn,o);s.fn=t=>(e(),j&&j.running?r.track(t):n.track(t))}return s}function ve(e){const t=j&&j.running;if(0===(t?e.tState:e.state))return;if((t?e.tState:e.state)===O)return xe(e);if(e.suspense&&G(e.suspense.inFallback))return e.suspense.effects.push(e);const n=[e];for(;(e=e.owner)&&(!e.updatedAt||e.updatedAt<E);){if(t&&j.disposed.has(e))return;(t?e.tState:e.state)&&n.push(e)}for(let o=n.length-1;o>=0;o--){if(e=n[o],t){let t=e,r=n[o+1];for(;(t=t.owner)&&t!==r;)if(j.disposed.has(t))return}if((t?e.tState:e.state)===m)he(e);else if((t?e.tState:e.state)===O){const t=M;M=null,be((()=>xe(e,n[0])),!1),M=t}}}function be(e,t){if(M)return e();let n=!1;t||(M=[]),I?n=!0:I=[],E++;try{const t=e();return function(e){M&&(C&&j&&j.running?function(e){for(let t=0;t<e.length;t++){const n=e[t],o=j.queue;o.has(n)||(o.add(n),C((()=>{o.delete(n),be((()=>{j.running=!0,ve(n)}),!1),j&&(j.running=!1)})))}}(M):we(M),M=null);if(e)return;let t;if(j)if(j.promises.size||j.queue.size){if(j.running)return j.running=!1,j.effects.push.apply(j.effects,I),I=null,void oe(!0)}else{const e=j.sources,n=j.disposed;I.push.apply(I,j.effects),t=j.resolve;for(const e of I)"tState"in e&&(e.state=e.tState),delete e.tState;j=null,be((()=>{for(const e of n)Se(e);for(const t of e){if(t.value=t.tValue,t.owned)for(let e=0,n=t.owned.length;e<n;e++)Se(t.owned[e]);t.tOwned&&(t.owned=t.tOwned),delete t.tValue,delete t.tOwned,t.tState=0}oe(!1)}),!1)}const n=I;I=null,n.length&&be((()=>S(n)),!1);t&&t()}(n),t}catch(e){n||(I=null),M=null,Pe(e)}}function we(e){for(let t=0;t<e.length;t++)ve(e[t])}function ye(e){let t,n=0;for(t=0;t<e.length;t++){const o=e[t];o.user?e[n++]=o:ve(o)}if(d.context){if(d.count)return d.effects||(d.effects=[]),void d.effects.push(...e.slice(0,n));p()}for(!d.effects||!d.done&&d.count||(e=[...d.effects,...e],n+=d.effects.length,delete d.effects),t=0;t<n;t++)ve(e[t])}function xe(e,t){const n=j&&j.running;n?e.tState=0:e.state=0;for(let o=0;o<e.sources.length;o+=1){const r=e.sources[o];if(r.sources){const e=n?r.tState:r.state;e===m?r!==t&&(!r.updatedAt||r.updatedAt<E)&&ve(r):e===O&&xe(r,t)}}}function ke(e){const t=j&&j.running;for(let n=0;n<e.observers.length;n+=1){const o=e.observers[n];(t?o.tState:o.state)||(t?o.tState=O:o.state=O,o.pure?M.push(o):I.push(o),o.observers&&ke(o))}}function Se(e){let t;if(e.sources)for(;e.sources.length;){const t=e.sources.pop(),n=e.sourceSlots.pop(),o=t.observers;if(o&&o.length){const e=o.pop(),r=t.observerSlots.pop();n<o.length&&(e.sourceSlots[r]=n,o[n]=e,t.observerSlots[n]=r)}}if(e.tOwned){for(t=e.tOwned.length-1;t>=0;t--)Se(e.tOwned[t]);delete e.tOwned}if(j&&j.running&&e.pure)me(e,!0);else if(e.owned){for(t=e.owned.length-1;t>=0;t--)Se(e.owned[t]);e.owned=null}if(e.cleanups){for(t=e.cleanups.length-1;t>=0;t--)e.cleanups[t]();e.cleanups=null}j&&j.running?e.tState=0:e.state=0}function me(e,t){if(t||(e.tState=0,j.disposed.add(e)),e.owned)for(let t=0;t<e.owned.length;t++)me(e.owned[t])}function Oe(e){return e instanceof Error?e:new Error("string"==typeof e?e:"Unknown error",{cause:e})}function Ae(e,t,n){try{for(const n of t)n(e)}catch(e){Pe(e,n&&n.owner||null)}}function Pe(e,t=F){const n=k&&t&&t.context&&t.context[k],o=Oe(e);if(!n)throw o;I?I.push({fn(){Ae(o,n,t)},state:m}):Ae(o,n,t)}function Fe(e){if("function"==typeof e&&!e.length)return Fe(e());if(Array.isArray(e)){const t=[];for(let n=0;n<e.length;n++){const o=Fe(e[n]);Array.isArray(o)?t.push.apply(t,o):t.push(o)}return t}return e}function je(e,t){return function(t){let n;return _((()=>n=G((()=>(F.context={...F.context,[e]:t.value},le((()=>t.children)))))),void 0),n}}function Ce(e){k||(k=Symbol("error")),null===F||(null!==F.context&&F.context[k]?F.context[k].push(e):(F.context={...F.context,[k]:[e]},Ve(F,k,[e])))}function Ve(e,t,n){if(e.owned)for(let o=0;o<e.owned.length;o++)e.owned[o].context===e.context&&Ve(e.owned[o],t,n),e.owned[o].context?e.owned[o].context[t]||(e.owned[o].context[t]=n,Ve(e.owned[o],t,n)):(e.owned[o].context=e.context,Ve(e.owned[o],t,n))}function qe(e){return{subscribe(t){if(!(t instanceof Object)||null==t)throw new TypeError("Expected the observer to be an object.");const n="function"==typeof t?t:t.next&&t.next.bind(t);if(!n)return{unsubscribe(){}};const o=T((t=>(z((()=>{const t=e();G((()=>n(t)))})),t)));return Y()&&R(o),{unsubscribe(){o()}}},[Symbol.observable||"@@observable"](){return this}}}function Me(e,t=void 0){const[n,o]=$(t,{equals:!1});if("subscribe"in e){const t=e.subscribe((e=>o((()=>e))));R((()=>"unsubscribe"in t?t.unsubscribe():t()))}else{R(e(o))}return n}const Ie=Symbol("fallback");function Ee(e){for(let t=0;t<e.length;t++)e[t]()}function Te(e,t,n={}){let o=[],r=[],s=[],u=0,l=t.length>1?[]:null;return R((()=>Ee(s))),()=>{let c,i,a=e()||[],f=a.length;return a[w],G((()=>{let e,t,h,p,g,v,b,w,y;if(0===f)0!==u&&(Ee(s),s=[],o=[],r=[],u=0,l&&(l=[])),n.fallback&&(o=[Ie],r[0]=T((e=>(s[0]=e,n.fallback()))),u=1);else if(0===u){for(r=new Array(f),i=0;i<f;i++)o[i]=a[i],r[i]=T(d);u=f}else{for(h=new Array(f),p=new Array(f),l&&(g=new Array(f)),v=0,b=Math.min(u,f);v<b&&o[v]===a[v];v++);for(b=u-1,w=f-1;b>=v&&w>=v&&o[b]===a[w];b--,w--)h[w]=r[b],p[w]=s[b],l&&(g[w]=l[b]);for(e=new Map,t=new Array(w+1),i=w;i>=v;i--)y=a[i],c=e.get(y),t[i]=void 0===c?-1:c,e.set(y,i);for(c=v;c<=b;c++)y=o[c],i=e.get(y),void 0!==i&&-1!==i?(h[i]=r[c],p[i]=s[c],l&&(g[i]=l[c]),i=t[i],e.set(y,i)):s[c]();for(i=v;i<f;i++)i in h?(r[i]=h[i],s[i]=p[i],l&&(l[i]=g[i],l[i](i))):r[i]=T(d);r=r.slice(0,u=f),o=a.slice(0)}return r}));function d(e){if(s[i]=e,l){const[e,n]=$(i);return l[i]=n,t(a[i],e)}return t(a[i])}}}function $e(e,t,n={}){let o,r=[],s=[],u=[],l=[],c=0;return R((()=>Ee(u))),()=>{const i=e()||[],a=i.length;return i[w],G((()=>{if(0===a)return 0!==c&&(Ee(u),u=[],r=[],s=[],c=0,l=[]),n.fallback&&(r=[Ie],s[0]=T((e=>(u[0]=e,n.fallback()))),c=1),s;for(r[0]===Ie&&(u[0](),u=[],r=[],s=[],c=0),o=0;o<a;o++)o<r.length&&r[o]!==i[o]?l[o]((()=>i[o])):o>=r.length&&(s[o]=T(f));for(;o<r.length;o++)u[o]();return c=l.length=u.length=a,r=i.slice(0),s=s.slice(0,c)}));function f(e){u[o]=e;const[n,r]=$(i[o]);return l[o]=r,t(n,o)}}}let Ne=!1;function _e(){Ne=!0}function ze(e,t){if(Ne&&d.context){const n=d.context;p({...d.context,id:d.getNextContextId(),count:0});const o=G((()=>e(t||{})));return p(n),o}return G((()=>e(t||{})))}function De(){return!0}const He={get:(e,t,n)=>t===v?n:e.get(t),has:(e,t)=>t===v||e.has(t),set:De,deleteProperty:De,getOwnPropertyDescriptor:(e,t)=>({configurable:!0,enumerable:!0,get:()=>e.get(t),set:De,deleteProperty:De}),ownKeys:e=>e.keys()};function Ke(e){return(e="function"==typeof e?e():e)?e:{}}function Le(){for(let e=0,t=this.length;e<t;++e){const t=this[e]();if(void 0!==t)return t}}function Ue(...e){let t=!1;for(let n=0;n<e.length;n++){const o=e[n];t=t||!!o&&v in o,e[n]="function"==typeof o?(t=!0,H(o)):o}if(b&&t)return new Proxy({get(t){for(let n=e.length-1;n>=0;n--){const o=Ke(e[n])[t];if(void 0!==o)return o}},has(t){for(let n=e.length-1;n>=0;n--)if(t in Ke(e[n]))return!0;return!1},keys(){const t=[];for(let n=0;n<e.length;n++)t.push(...Object.keys(Ke(e[n])));return[...new Set(t)]}},He);const n={},o=Object.create(null);for(let t=e.length-1;t>=0;t--){const r=e[t];if(!r)continue;const s=Object.getOwnPropertyNames(r);for(let e=s.length-1;e>=0;e--){const t=s[e];if("__proto__"===t||"constructor"===t)continue;const u=Object.getOwnPropertyDescriptor(r,t);if(o[t]){const e=n[t];e&&(u.get?e.push(u.get.bind(r)):void 0!==u.value&&e.push((()=>u.value)))}else o[t]=u.get?{enumerable:!0,configurable:!0,get:Le.bind(n[t]=[u.get.bind(r)])}:void 0!==u.value?u:void 0}}const r={},s=Object.keys(o);for(let e=s.length-1;e>=0;e--){const t=s[e],n=o[t];n&&n.get?Object.defineProperty(r,t,n):r[t]=n?n.value:void 0}return r}function Be(e,...t){if(b&&v in e){const n=new Set(t.length>1?t.flat():t[0]),o=t.map((t=>new Proxy({get:n=>t.includes(n)?e[n]:void 0,has:n=>t.includes(n)&&n in e,keys:()=>t.filter((t=>t in e))},He)));return o.push(new Proxy({get:t=>n.has(t)?void 0:e[t],has:t=>!n.has(t)&&t in e,keys:()=>Object.keys(e).filter((e=>!n.has(e)))},He)),o}const n={},o=t.map((()=>({})));for(const r of Object.getOwnPropertyNames(e)){const s=Object.getOwnPropertyDescriptor(e,r),u=!s.get&&!s.set&&s.enumerable&&s.writable&&s.configurable;let l=!1,c=0;for(const e of t)e.includes(r)&&(l=!0,u?o[c][r]=s.value:Object.defineProperty(o[c],r,s)),++c;l||(u?n[r]=s.value:Object.defineProperty(n,r,s))}return[...o,n]}function Ge(e){let t,n;const o=o=>{const r=d.context;if(r){const[o,s]=$();d.count||(d.count=0),d.count++,(n||(n=e())).then((e=>{!d.done&&p(r),d.count--,s((()=>e.default)),p()})),t=o}else if(!t){const[o]=K((()=>(n||(n=e())).then((e=>e.default))));t=o}let s;return H((()=>(s=t())?G((()=>{if(!r||d.done)return s(o);const e=d.context;p(r);const t=s(o);return p(e),t})):""))};return o.preload=()=>n||((n=e()).then((e=>t=()=>e.default)),n),o}let Je=0;function Qe(){return d.context?d.getNextContextId():"cl-"+Je++}const Re=e=>`Stale read from <${e}>.`;function We(e){const t="fallback"in e&&{fallback:()=>e.fallback};return H(Te((()=>e.each),e.children,t||void 0))}function Xe(e){const t="fallback"in e&&{fallback:()=>e.fallback};return H($e((()=>e.each),e.children,t||void 0))}function Ye(e){const t=e.keyed,n=H((()=>e.when),void 0,void 0),o=t?n:H(n,void 0,{equals:(e,t)=>!e==!t});return H((()=>{const r=o();if(r){const s=e.children;return"function"==typeof s&&s.length>0?G((()=>s(t?r:()=>{if(!G(o))throw Re("Show");return n()}))):s}return e.fallback}),void 0,void 0)}function Ze(e){const t=le((()=>e.children)),n=H((()=>{const e=t(),n=Array.isArray(e)?e:[e];let o=()=>{};for(let e=0;e<n.length;e++){const t=e,r=n[e],s=o,u=H((()=>s()?void 0:r.when),void 0,void 0),l=r.keyed?u:H(u,void 0,{equals:(e,t)=>!e==!t});o=()=>s()||(l()?[t,u,r]:void 0)}return o}));return H((()=>{const t=n()();if(!t)return e.fallback;const[o,r,s]=t,u=s.children;return"function"==typeof u&&u.length>0?G((()=>u(s.keyed?r():()=>{if(G(n)()?.[0]!==o)throw Re("Match");return r()}))):u}),void 0,void 0)}function et(e){return e}let tt;function nt(){tt&&[...tt].forEach((e=>e()))}function ot(e){let t;d.context&&d.load&&(t=d.load(d.getContextId()));const[n,o]=$(t,void 0);return tt||(tt=new Set),tt.add(o),R((()=>tt.delete(o))),H((()=>{let t;if(t=n()){const n=e.fallback;return"function"==typeof n&&n.length?G((()=>n(t,(()=>o())))):n}return W((()=>e.children),o)}),void 0,void 0)}const rt=(e,t)=>e.showContent===t.showContent&&e.showFallback===t.showFallback,st=se();function ut(e){let t,[n,o]=$((()=>({inFallback:!1})));const r=ue(st),[s,u]=$([]);r&&(t=r.register(H((()=>n()().inFallback))));const l=H((n=>{const o=e.revealOrder,r=e.tail,{showContent:u=!0,showFallback:l=!0}=t?t():{},c=s(),i="backwards"===o;if("together"===o){const e=c.every((e=>!e())),t=c.map((()=>({showContent:e&&u,showFallback:l})));return t.inFallback=!e,t}let a=!1,f=n.inFallback;const d=[];for(let e=0,t=c.length;e<t;e++){const n=i?t-e-1:e,o=c[n]();if(a||o){const e=!a;e&&(f=!0),d[n]={showContent:e,showFallback:!(r&&(!e||"collapsed"!==r))&&l},a=!0}else d[n]={showContent:u,showFallback:l}}return a||(f=!1),d.inFallback=f,d}),{inFallback:!1});return o((()=>l)),ze(st.Provider,{value:{register:e=>{let t;return u((n=>(t=n.length,[...n,e]))),H((()=>l()[t]),void 0,{equals:rt})}},get children(){return e.children}})}function lt(e){let t,n,o,r,s,u=0;const[l,c]=$(!1),i=ie(),a={increment:()=>{1==++u&&c(!0)},decrement:()=>{0==--u&&c(!1)},inFallback:l,effects:[],resolved:!1},f=Y();if(d.context&&d.load){const e=d.getContextId();let t=d.load(e);if(t&&("object"!=typeof t||"success"!==t.status?o=t:d.gather(e)),o&&"$$f"!==o){const[t,u]=$(void 0,{equals:!1});r=t,o.then((()=>{if(d.done)return u();d.gather(e),p(n),u(),p()}),(e=>{s=e,u()}))}}const h=ue(st);let g;return h&&(t=h.register(a.inFallback)),R((()=>g&&g())),ze(i.Provider,{value:a,get children(){return H((()=>{if(s)throw s;if(n=d.context,r)return r(),r=void 0;n&&"$$f"===o&&p();const u=H((()=>e.children));return H((r=>{const s=a.inFallback(),{showContent:l=!0,showFallback:c=!0}=t?t():{};return(!s||o&&"$$f"!==o)&&l?(a.resolved=!0,g&&g(),g=n=o=void 0,i=a.effects,I.push.apply(I,i),i.length=0,u()):c?g?r:T((t=>(g=t,n&&(p({id:n.id+"F",count:0}),n=void 0),e.fallback)),f):void 0;var i}))}))}})}const ct=void 0;export{y as $DEVCOMP,v as $PROXY,w as $TRACK,ct as DEV,ot as ErrorBoundary,We as For,Xe as Index,et as Match,Ye as Show,lt as Suspense,ut as SuspenseList,Ze as Switch,B as batch,a as cancelCallback,W as catchError,le as children,ze as createComponent,N as createComputed,se as createContext,L as createDeferred,z as createEffect,H as createMemo,D as createReaction,_ as createRenderEffect,K as createResource,T as createRoot,U as createSelector,$ as createSignal,Qe as createUniqueId,ae as enableExternalSource,_e as enableHydration,ee as enableScheduling,g as equalFn,Me as from,X as getListener,Y as getOwner,$e as indexArray,Ge as lazy,Te as mapArray,Ue as mergeProps,qe as observable,J as on,R as onCleanup,Ce as onError,Q as onMount,i as requestCallback,nt as resetErrorBoundaries,Z as runWithOwner,d as sharedConfig,Be as splitProps,te as startTransition,G as untrack,ue as useContext,re as useTransition};export default null;
-//# sourceMappingURL=/sm/89f46854552c9a522808c1f6b2cce6ca89214a1c8ede2708ad1d063c0a6bd4e6.map
+let taskIdCounter = 1,
+  isCallbackScheduled = false,
+  isPerformingWork = false,
+  taskQueue = [],
+  currentTask = null,
+  shouldYieldToHost = null,
+  yieldInterval = 5,
+  deadline = 0,
+  maxYieldInterval = 300,
+  scheduleCallback = null,
+  scheduledCallback = null;
+const maxSigned31BitInt = 1073741823;
+function setupScheduler() {
+  const channel = new MessageChannel(),
+    port = channel.port2;
+  scheduleCallback = () => port.postMessage(null);
+  channel.port1.onmessage = () => {
+    if (scheduledCallback !== null) {
+      const currentTime = performance.now();
+      deadline = currentTime + yieldInterval;
+      const hasTimeRemaining = true;
+      try {
+        const hasMoreWork = scheduledCallback(hasTimeRemaining, currentTime);
+        if (!hasMoreWork) {
+          scheduledCallback = null;
+        } else port.postMessage(null);
+      } catch (error) {
+        port.postMessage(null);
+        throw error;
+      }
+    }
+  };
+  if (navigator && navigator.scheduling && navigator.scheduling.isInputPending) {
+    const scheduling = navigator.scheduling;
+    shouldYieldToHost = () => {
+      const currentTime = performance.now();
+      if (currentTime >= deadline) {
+        if (scheduling.isInputPending()) {
+          return true;
+        }
+        return currentTime >= maxYieldInterval;
+      } else {
+        return false;
+      }
+    };
+  } else {
+    shouldYieldToHost = () => performance.now() >= deadline;
+  }
+}
+function enqueue(taskQueue, task) {
+  function findIndex() {
+    let m = 0;
+    let n = taskQueue.length - 1;
+    while (m <= n) {
+      const k = (n + m) >> 1;
+      const cmp = task.expirationTime - taskQueue[k].expirationTime;
+      if (cmp > 0) m = k + 1;
+      else if (cmp < 0) n = k - 1;
+      else return k;
+    }
+    return m;
+  }
+  taskQueue.splice(findIndex(), 0, task);
+}
+function requestCallback(fn, options) {
+  if (!scheduleCallback) setupScheduler();
+  let startTime = performance.now(),
+    timeout = maxSigned31BitInt;
+  if (options && options.timeout) timeout = options.timeout;
+  const newTask = {
+    id: taskIdCounter++,
+    fn,
+    startTime,
+    expirationTime: startTime + timeout
+  };
+  enqueue(taskQueue, newTask);
+  if (!isCallbackScheduled && !isPerformingWork) {
+    isCallbackScheduled = true;
+    scheduledCallback = flushWork;
+    scheduleCallback();
+  }
+  return newTask;
+}
+function cancelCallback(task) {
+  task.fn = null;
+}
+function flushWork(hasTimeRemaining, initialTime) {
+  isCallbackScheduled = false;
+  isPerformingWork = true;
+  try {
+    return workLoop(hasTimeRemaining, initialTime);
+  } finally {
+    currentTask = null;
+    isPerformingWork = false;
+  }
+}
+function workLoop(hasTimeRemaining, initialTime) {
+  let currentTime = initialTime;
+  currentTask = taskQueue[0] || null;
+  while (currentTask !== null) {
+    if (currentTask.expirationTime > currentTime && (!hasTimeRemaining || shouldYieldToHost())) {
+      break;
+    }
+    const callback = currentTask.fn;
+    if (callback !== null) {
+      currentTask.fn = null;
+      const didUserCallbackTimeout = currentTask.expirationTime <= currentTime;
+      callback(didUserCallbackTimeout);
+      currentTime = performance.now();
+      if (currentTask === taskQueue[0]) {
+        taskQueue.shift();
+      }
+    } else taskQueue.shift();
+    currentTask = taskQueue[0] || null;
+  }
+  return currentTask !== null;
+}
+
+const sharedConfig = {
+  context: undefined,
+  registry: undefined,
+  effects: undefined,
+  done: false,
+  getContextId() {
+    return getContextId(this.context.count);
+  },
+  getNextContextId() {
+    return getContextId(this.context.count++);
+  }
+};
+function getContextId(count) {
+  const num = String(count),
+    len = num.length - 1;
+  return sharedConfig.context.id + (len ? String.fromCharCode(96 + len) : "") + num;
+}
+function setHydrateContext(context) {
+  sharedConfig.context = context;
+}
+function nextHydrateContext() {
+  return {
+    ...sharedConfig.context,
+    id: sharedConfig.getNextContextId(),
+    count: 0
+  };
+}
+
+const IS_DEV = false;
+const equalFn = (a, b) => a === b;
+const $PROXY = Symbol("solid-proxy");
+const SUPPORTS_PROXY = typeof Proxy === "function";
+const $TRACK = Symbol("solid-track");
+const $DEVCOMP = Symbol("solid-dev-component");
+const signalOptions = {
+  equals: equalFn
+};
+let ERROR = null;
+let runEffects = runQueue;
+const STALE = 1;
+const PENDING = 2;
+const UNOWNED = {
+  owned: null,
+  cleanups: null,
+  context: null,
+  owner: null
+};
+const NO_INIT = {};
+var Owner = null;
+let Transition = null;
+let Scheduler = null;
+let ExternalSourceConfig = null;
+let Listener = null;
+let Updates = null;
+let Effects = null;
+let ExecCount = 0;
+function createRoot(fn, detachedOwner) {
+  const listener = Listener,
+    owner = Owner,
+    unowned = fn.length === 0,
+    current = detachedOwner === undefined ? owner : detachedOwner,
+    root = unowned
+      ? UNOWNED
+      : {
+          owned: null,
+          cleanups: null,
+          context: current ? current.context : null,
+          owner: current
+        },
+    updateFn = unowned ? fn : () => fn(() => untrack(() => cleanNode(root)));
+  Owner = root;
+  Listener = null;
+  try {
+    return runUpdates(updateFn, true);
+  } finally {
+    Listener = listener;
+    Owner = owner;
+  }
+}
+function createSignal(value, options) {
+  options = options ? Object.assign({}, signalOptions, options) : signalOptions;
+  const s = {
+    value,
+    observers: null,
+    observerSlots: null,
+    comparator: options.equals || undefined
+  };
+  const setter = value => {
+    if (typeof value === "function") {
+      if (Transition && Transition.running && Transition.sources.has(s)) value = value(s.tValue);
+      else value = value(s.value);
+    }
+    return writeSignal(s, value);
+  };
+  return [readSignal.bind(s), setter];
+}
+function createComputed(fn, value, options) {
+  const c = createComputation(fn, value, true, STALE);
+  if (Scheduler && Transition && Transition.running) Updates.push(c);
+  else updateComputation(c);
+}
+function createRenderEffect(fn, value, options) {
+  const c = createComputation(fn, value, false, STALE);
+  if (Scheduler && Transition && Transition.running) Updates.push(c);
+  else updateComputation(c);
+}
+function createEffect(fn, value, options) {
+  runEffects = runUserEffects;
+  const c = createComputation(fn, value, false, STALE),
+    s = SuspenseContext && useContext(SuspenseContext);
+  if (s) c.suspense = s;
+  if (!options || !options.render) c.user = true;
+  Effects ? Effects.push(c) : updateComputation(c);
+}
+function createReaction(onInvalidate, options) {
+  let fn;
+  const c = createComputation(
+      () => {
+        fn ? fn() : untrack(onInvalidate);
+        fn = undefined;
+      },
+      undefined,
+      false,
+      0
+    ),
+    s = SuspenseContext && useContext(SuspenseContext);
+  if (s) c.suspense = s;
+  c.user = true;
+  return tracking => {
+    fn = tracking;
+    updateComputation(c);
+  };
+}
+function createMemo(fn, value, options) {
+  options = options ? Object.assign({}, signalOptions, options) : signalOptions;
+  const c = createComputation(fn, value, true, 0);
+  c.observers = null;
+  c.observerSlots = null;
+  c.comparator = options.equals || undefined;
+  if (Scheduler && Transition && Transition.running) {
+    c.tState = STALE;
+    Updates.push(c);
+  } else updateComputation(c);
+  return readSignal.bind(c);
+}
+function isPromise(v) {
+  return v && typeof v === "object" && "then" in v;
+}
+function createResource(pSource, pFetcher, pOptions) {
+  let source;
+  let fetcher;
+  let options;
+  if (typeof pFetcher === "function") {
+    source = pSource;
+    fetcher = pFetcher;
+    options = pOptions || {};
+  } else {
+    source = true;
+    fetcher = pSource;
+    options = pFetcher || {};
+  }
+  let pr = null,
+    initP = NO_INIT,
+    id = null,
+    loadedUnderTransition = false,
+    scheduled = false,
+    resolved = "initialValue" in options,
+    dynamic = typeof source === "function" && createMemo(source);
+  const contexts = new Set(),
+    [value, setValue] = (options.storage || createSignal)(options.initialValue),
+    [error, setError] = createSignal(undefined),
+    [track, trigger] = createSignal(undefined, {
+      equals: false
+    }),
+    [state, setState] = createSignal(resolved ? "ready" : "unresolved");
+  if (sharedConfig.context) {
+    id = sharedConfig.getNextContextId();
+    if (options.ssrLoadFrom === "initial") initP = options.initialValue;
+    else if (sharedConfig.load && sharedConfig.has(id)) initP = sharedConfig.load(id);
+  }
+  function loadEnd(p, v, error, key) {
+    if (pr === p) {
+      pr = null;
+      key !== undefined && (resolved = true);
+      if ((p === initP || v === initP) && options.onHydrated)
+        queueMicrotask(() =>
+          options.onHydrated(key, {
+            value: v
+          })
+        );
+      initP = NO_INIT;
+      if (Transition && p && loadedUnderTransition) {
+        Transition.promises.delete(p);
+        loadedUnderTransition = false;
+        runUpdates(() => {
+          Transition.running = true;
+          completeLoad(v, error);
+        }, false);
+      } else completeLoad(v, error);
+    }
+    return v;
+  }
+  function completeLoad(v, err) {
+    runUpdates(() => {
+      if (err === undefined) setValue(() => v);
+      setState(err !== undefined ? "errored" : resolved ? "ready" : "unresolved");
+      setError(err);
+      for (const c of contexts.keys()) c.decrement();
+      contexts.clear();
+    }, false);
+  }
+  function read() {
+    const c = SuspenseContext && useContext(SuspenseContext),
+      v = value(),
+      err = error();
+    if (err !== undefined && !pr) throw err;
+    if (Listener && !Listener.user && c) {
+      createComputed(() => {
+        track();
+        if (pr) {
+          if (c.resolved && Transition && loadedUnderTransition) Transition.promises.add(pr);
+          else if (!contexts.has(c)) {
+            c.increment();
+            contexts.add(c);
+          }
+        }
+      });
+    }
+    return v;
+  }
+  function load(refetching = true) {
+    if (refetching !== false && scheduled) return;
+    scheduled = false;
+    const lookup = dynamic ? dynamic() : source;
+    loadedUnderTransition = Transition && Transition.running;
+    if (lookup == null || lookup === false) {
+      loadEnd(pr, untrack(value));
+      return;
+    }
+    if (Transition && pr) Transition.promises.delete(pr);
+    const p =
+      initP !== NO_INIT
+        ? initP
+        : untrack(() =>
+            fetcher(lookup, {
+              value: value(),
+              refetching
+            })
+          );
+    if (!isPromise(p)) {
+      loadEnd(pr, p, undefined, lookup);
+      return p;
+    }
+    pr = p;
+    if ("value" in p) {
+      if (p.status === "success") loadEnd(pr, p.value, undefined, lookup);
+      else loadEnd(pr, undefined, castError(p.value), lookup);
+      return p;
+    }
+    scheduled = true;
+    queueMicrotask(() => (scheduled = false));
+    runUpdates(() => {
+      setState(resolved ? "refreshing" : "pending");
+      trigger();
+    }, false);
+    return p.then(
+      v => loadEnd(p, v, undefined, lookup),
+      e => loadEnd(p, undefined, castError(e), lookup)
+    );
+  }
+  Object.defineProperties(read, {
+    state: {
+      get: () => state()
+    },
+    error: {
+      get: () => error()
+    },
+    loading: {
+      get() {
+        const s = state();
+        return s === "pending" || s === "refreshing";
+      }
+    },
+    latest: {
+      get() {
+        if (!resolved) return read();
+        const err = error();
+        if (err && !pr) throw err;
+        return value();
+      }
+    }
+  });
+  if (dynamic) createComputed(() => load(false));
+  else load(false);
+  return [
+    read,
+    {
+      refetch: load,
+      mutate: setValue
+    }
+  ];
+}
+function createDeferred(source, options) {
+  let t,
+    timeout = options ? options.timeoutMs : undefined;
+  const node = createComputation(
+    () => {
+      if (!t || !t.fn)
+        t = requestCallback(
+          () => setDeferred(() => node.value),
+          timeout !== undefined
+            ? {
+                timeout
+              }
+            : undefined
+        );
+      return source();
+    },
+    undefined,
+    true
+  );
+  const [deferred, setDeferred] = createSignal(
+    Transition && Transition.running && Transition.sources.has(node) ? node.tValue : node.value,
+    options
+  );
+  updateComputation(node);
+  setDeferred(() =>
+    Transition && Transition.running && Transition.sources.has(node) ? node.tValue : node.value
+  );
+  return deferred;
+}
+function createSelector(source, fn = equalFn, options) {
+  const subs = new Map();
+  const node = createComputation(
+    p => {
+      const v = source();
+      for (const [key, val] of subs.entries())
+        if (fn(key, v) !== fn(key, p)) {
+          for (const c of val.values()) {
+            c.state = STALE;
+            if (c.pure) Updates.push(c);
+            else Effects.push(c);
+          }
+        }
+      return v;
+    },
+    undefined,
+    true,
+    STALE
+  );
+  updateComputation(node);
+  return key => {
+    const listener = Listener;
+    if (listener) {
+      let l;
+      if ((l = subs.get(key))) l.add(listener);
+      else subs.set(key, (l = new Set([listener])));
+      onCleanup(() => {
+        l.delete(listener);
+        !l.size && subs.delete(key);
+      });
+    }
+    return fn(
+      key,
+      Transition && Transition.running && Transition.sources.has(node) ? node.tValue : node.value
+    );
+  };
+}
+function batch(fn) {
+  return runUpdates(fn, false);
+}
+function untrack(fn) {
+  if (!ExternalSourceConfig && Listener === null) return fn();
+  const listener = Listener;
+  Listener = null;
+  try {
+    if (ExternalSourceConfig) return ExternalSourceConfig.untrack(fn);
+    return fn();
+  } finally {
+    Listener = listener;
+  }
+}
+function on(deps, fn, options) {
+  const isArray = Array.isArray(deps);
+  let prevInput;
+  let defer = options && options.defer;
+  return prevValue => {
+    let input;
+    if (isArray) {
+      input = Array(deps.length);
+      for (let i = 0; i < deps.length; i++) input[i] = deps[i]();
+    } else input = deps();
+    if (defer) {
+      defer = false;
+      return prevValue;
+    }
+    const result = untrack(() => fn(input, prevInput, prevValue));
+    prevInput = input;
+    return result;
+  };
+}
+function onMount(fn) {
+  createEffect(() => untrack(fn));
+}
+function onCleanup(fn) {
+  if (Owner === null);
+  else if (Owner.cleanups === null) Owner.cleanups = [fn];
+  else Owner.cleanups.push(fn);
+  return fn;
+}
+function catchError(fn, handler) {
+  ERROR || (ERROR = Symbol("error"));
+  Owner = createComputation(undefined, undefined, true);
+  Owner.context = {
+    ...Owner.context,
+    [ERROR]: [handler]
+  };
+  if (Transition && Transition.running) Transition.sources.add(Owner);
+  try {
+    return fn();
+  } catch (err) {
+    handleError(err);
+  } finally {
+    Owner = Owner.owner;
+  }
+}
+function getListener() {
+  return Listener;
+}
+function getOwner() {
+  return Owner;
+}
+function runWithOwner(o, fn) {
+  const prev = Owner;
+  const prevListener = Listener;
+  Owner = o;
+  Listener = null;
+  try {
+    return runUpdates(fn, true);
+  } catch (err) {
+    handleError(err);
+  } finally {
+    Owner = prev;
+    Listener = prevListener;
+  }
+}
+function enableScheduling(scheduler = requestCallback) {
+  Scheduler = scheduler;
+}
+function startTransition(fn) {
+  if (Transition && Transition.running) {
+    fn();
+    return Transition.done;
+  }
+  const l = Listener;
+  const o = Owner;
+  return Promise.resolve().then(() => {
+    Listener = l;
+    Owner = o;
+    let t;
+    if (Scheduler || SuspenseContext) {
+      t =
+        Transition ||
+        (Transition = {
+          sources: new Set(),
+          effects: [],
+          promises: new Set(),
+          disposed: new Set(),
+          queue: new Set(),
+          running: true
+        });
+      t.done || (t.done = new Promise(res => (t.resolve = res)));
+      t.running = true;
+    }
+    runUpdates(fn, false);
+    Listener = Owner = null;
+    return t ? t.done : undefined;
+  });
+}
+const [transPending, setTransPending] = /*@__PURE__*/ createSignal(false);
+function useTransition() {
+  return [transPending, startTransition];
+}
+function resumeEffects(e) {
+  Effects.push.apply(Effects, e);
+  e.length = 0;
+}
+function createContext(defaultValue, options) {
+  const id = Symbol("context");
+  return {
+    id,
+    Provider: createProvider(id),
+    defaultValue
+  };
+}
+function useContext(context) {
+  let value;
+  return Owner && Owner.context && (value = Owner.context[context.id]) !== undefined
+    ? value
+    : context.defaultValue;
+}
+function children(fn) {
+  const children = createMemo(fn);
+  const memo = createMemo(() => resolveChildren(children()));
+  memo.toArray = () => {
+    const c = memo();
+    return Array.isArray(c) ? c : c != null ? [c] : [];
+  };
+  return memo;
+}
+let SuspenseContext;
+function getSuspenseContext() {
+  return SuspenseContext || (SuspenseContext = createContext());
+}
+function enableExternalSource(factory, untrack = fn => fn()) {
+  if (ExternalSourceConfig) {
+    const { factory: oldFactory, untrack: oldUntrack } = ExternalSourceConfig;
+    ExternalSourceConfig = {
+      factory: (fn, trigger) => {
+        const oldSource = oldFactory(fn, trigger);
+        const source = factory(x => oldSource.track(x), trigger);
+        return {
+          track: x => source.track(x),
+          dispose() {
+            source.dispose();
+            oldSource.dispose();
+          }
+        };
+      },
+      untrack: fn => oldUntrack(() => untrack(fn))
+    };
+  } else {
+    ExternalSourceConfig = {
+      factory,
+      untrack
+    };
+  }
+}
+function readSignal() {
+  const runningTransition = Transition && Transition.running;
+  if (this.sources && (runningTransition ? this.tState : this.state)) {
+    if ((runningTransition ? this.tState : this.state) === STALE) updateComputation(this);
+    else {
+      const updates = Updates;
+      Updates = null;
+      runUpdates(() => lookUpstream(this), false);
+      Updates = updates;
+    }
+  }
+  if (Listener) {
+    const sSlot = this.observers ? this.observers.length : 0;
+    if (!Listener.sources) {
+      Listener.sources = [this];
+      Listener.sourceSlots = [sSlot];
+    } else {
+      Listener.sources.push(this);
+      Listener.sourceSlots.push(sSlot);
+    }
+    if (!this.observers) {
+      this.observers = [Listener];
+      this.observerSlots = [Listener.sources.length - 1];
+    } else {
+      this.observers.push(Listener);
+      this.observerSlots.push(Listener.sources.length - 1);
+    }
+  }
+  if (runningTransition && Transition.sources.has(this)) return this.tValue;
+  return this.value;
+}
+function writeSignal(node, value, isComp) {
+  let current =
+    Transition && Transition.running && Transition.sources.has(node) ? node.tValue : node.value;
+  if (!node.comparator || !node.comparator(current, value)) {
+    if (Transition) {
+      const TransitionRunning = Transition.running;
+      if (TransitionRunning || (!isComp && Transition.sources.has(node))) {
+        Transition.sources.add(node);
+        node.tValue = value;
+      }
+      if (!TransitionRunning) node.value = value;
+    } else node.value = value;
+    if (node.observers && node.observers.length) {
+      runUpdates(() => {
+        for (let i = 0; i < node.observers.length; i += 1) {
+          const o = node.observers[i];
+          const TransitionRunning = Transition && Transition.running;
+          if (TransitionRunning && Transition.disposed.has(o)) continue;
+          if (TransitionRunning ? !o.tState : !o.state) {
+            if (o.pure) Updates.push(o);
+            else Effects.push(o);
+            if (o.observers) markDownstream(o);
+          }
+          if (!TransitionRunning) o.state = STALE;
+          else o.tState = STALE;
+        }
+        if (Updates.length > 10e5) {
+          Updates = [];
+          if (IS_DEV);
+          throw new Error();
+        }
+      }, false);
+    }
+  }
+  return value;
+}
+function updateComputation(node) {
+  if (!node.fn) return;
+  cleanNode(node);
+  const time = ExecCount;
+  runComputation(
+    node,
+    Transition && Transition.running && Transition.sources.has(node) ? node.tValue : node.value,
+    time
+  );
+  if (Transition && !Transition.running && Transition.sources.has(node)) {
+    queueMicrotask(() => {
+      runUpdates(() => {
+        Transition && (Transition.running = true);
+        Listener = Owner = node;
+        runComputation(node, node.tValue, time);
+        Listener = Owner = null;
+      }, false);
+    });
+  }
+}
+function runComputation(node, value, time) {
+  let nextValue;
+  const owner = Owner,
+    listener = Listener;
+  Listener = Owner = node;
+  try {
+    nextValue = node.fn(value);
+  } catch (err) {
+    if (node.pure) {
+      if (Transition && Transition.running) {
+        node.tState = STALE;
+        node.tOwned && node.tOwned.forEach(cleanNode);
+        node.tOwned = undefined;
+      } else {
+        node.state = STALE;
+        node.owned && node.owned.forEach(cleanNode);
+        node.owned = null;
+      }
+    }
+    node.updatedAt = time + 1;
+    return handleError(err);
+  } finally {
+    Listener = listener;
+    Owner = owner;
+  }
+  if (!node.updatedAt || node.updatedAt <= time) {
+    if (node.updatedAt != null && "observers" in node) {
+      writeSignal(node, nextValue, true);
+    } else if (Transition && Transition.running && node.pure) {
+      Transition.sources.add(node);
+      node.tValue = nextValue;
+    } else node.value = nextValue;
+    node.updatedAt = time;
+  }
+}
+function createComputation(fn, init, pure, state = STALE, options) {
+  const c = {
+    fn,
+    state: state,
+    updatedAt: null,
+    owned: null,
+    sources: null,
+    sourceSlots: null,
+    cleanups: null,
+    value: init,
+    owner: Owner,
+    context: Owner ? Owner.context : null,
+    pure
+  };
+  if (Transition && Transition.running) {
+    c.state = 0;
+    c.tState = state;
+  }
+  if (Owner === null);
+  else if (Owner !== UNOWNED) {
+    if (Transition && Transition.running && Owner.pure) {
+      if (!Owner.tOwned) Owner.tOwned = [c];
+      else Owner.tOwned.push(c);
+    } else {
+      if (!Owner.owned) Owner.owned = [c];
+      else Owner.owned.push(c);
+    }
+  }
+  if (ExternalSourceConfig && c.fn) {
+    const [track, trigger] = createSignal(undefined, {
+      equals: false
+    });
+    const ordinary = ExternalSourceConfig.factory(c.fn, trigger);
+    onCleanup(() => ordinary.dispose());
+    const triggerInTransition = () => startTransition(trigger).then(() => inTransition.dispose());
+    const inTransition = ExternalSourceConfig.factory(c.fn, triggerInTransition);
+    c.fn = x => {
+      track();
+      return Transition && Transition.running ? inTransition.track(x) : ordinary.track(x);
+    };
+  }
+  return c;
+}
+function runTop(node) {
+  const runningTransition = Transition && Transition.running;
+  if ((runningTransition ? node.tState : node.state) === 0) return;
+  if ((runningTransition ? node.tState : node.state) === PENDING) return lookUpstream(node);
+  if (node.suspense && untrack(node.suspense.inFallback)) return node.suspense.effects.push(node);
+  const ancestors = [node];
+  while ((node = node.owner) && (!node.updatedAt || node.updatedAt < ExecCount)) {
+    if (runningTransition && Transition.disposed.has(node)) return;
+    if (runningTransition ? node.tState : node.state) ancestors.push(node);
+  }
+  for (let i = ancestors.length - 1; i >= 0; i--) {
+    node = ancestors[i];
+    if (runningTransition) {
+      let top = node,
+        prev = ancestors[i + 1];
+      while ((top = top.owner) && top !== prev) {
+        if (Transition.disposed.has(top)) return;
+      }
+    }
+    if ((runningTransition ? node.tState : node.state) === STALE) {
+      updateComputation(node);
+    } else if ((runningTransition ? node.tState : node.state) === PENDING) {
+      const updates = Updates;
+      Updates = null;
+      runUpdates(() => lookUpstream(node, ancestors[0]), false);
+      Updates = updates;
+    }
+  }
+}
+function runUpdates(fn, init) {
+  if (Updates) return fn();
+  let wait = false;
+  if (!init) Updates = [];
+  if (Effects) wait = true;
+  else Effects = [];
+  ExecCount++;
+  try {
+    const res = fn();
+    completeUpdates(wait);
+    return res;
+  } catch (err) {
+    if (!wait) Effects = null;
+    Updates = null;
+    handleError(err);
+  }
+}
+function completeUpdates(wait) {
+  if (Updates) {
+    if (Scheduler && Transition && Transition.running) scheduleQueue(Updates);
+    else runQueue(Updates);
+    Updates = null;
+  }
+  if (wait) return;
+  let res;
+  if (Transition) {
+    if (!Transition.promises.size && !Transition.queue.size) {
+      const sources = Transition.sources;
+      const disposed = Transition.disposed;
+      Effects.push.apply(Effects, Transition.effects);
+      res = Transition.resolve;
+      for (const e of Effects) {
+        "tState" in e && (e.state = e.tState);
+        delete e.tState;
+      }
+      Transition = null;
+      runUpdates(() => {
+        for (const d of disposed) cleanNode(d);
+        for (const v of sources) {
+          v.value = v.tValue;
+          if (v.owned) {
+            for (let i = 0, len = v.owned.length; i < len; i++) cleanNode(v.owned[i]);
+          }
+          if (v.tOwned) v.owned = v.tOwned;
+          delete v.tValue;
+          delete v.tOwned;
+          v.tState = 0;
+        }
+        setTransPending(false);
+      }, false);
+    } else if (Transition.running) {
+      Transition.running = false;
+      Transition.effects.push.apply(Transition.effects, Effects);
+      Effects = null;
+      setTransPending(true);
+      return;
+    }
+  }
+  const e = Effects;
+  Effects = null;
+  if (e.length) runUpdates(() => runEffects(e), false);
+  if (res) res();
+}
+function runQueue(queue) {
+  for (let i = 0; i < queue.length; i++) runTop(queue[i]);
+}
+function scheduleQueue(queue) {
+  for (let i = 0; i < queue.length; i++) {
+    const item = queue[i];
+    const tasks = Transition.queue;
+    if (!tasks.has(item)) {
+      tasks.add(item);
+      Scheduler(() => {
+        tasks.delete(item);
+        runUpdates(() => {
+          Transition.running = true;
+          runTop(item);
+        }, false);
+        Transition && (Transition.running = false);
+      });
+    }
+  }
+}
+function runUserEffects(queue) {
+  let i,
+    userLength = 0;
+  for (i = 0; i < queue.length; i++) {
+    const e = queue[i];
+    if (!e.user) runTop(e);
+    else queue[userLength++] = e;
+  }
+  if (sharedConfig.context) {
+    if (sharedConfig.count) {
+      sharedConfig.effects || (sharedConfig.effects = []);
+      sharedConfig.effects.push(...queue.slice(0, userLength));
+      return;
+    }
+    setHydrateContext();
+  }
+  if (sharedConfig.effects && (sharedConfig.done || !sharedConfig.count)) {
+    queue = [...sharedConfig.effects, ...queue];
+    userLength += sharedConfig.effects.length;
+    delete sharedConfig.effects;
+  }
+  for (i = 0; i < userLength; i++) runTop(queue[i]);
+}
+function lookUpstream(node, ignore) {
+  const runningTransition = Transition && Transition.running;
+  if (runningTransition) node.tState = 0;
+  else node.state = 0;
+  for (let i = 0; i < node.sources.length; i += 1) {
+    const source = node.sources[i];
+    if (source.sources) {
+      const state = runningTransition ? source.tState : source.state;
+      if (state === STALE) {
+        if (source !== ignore && (!source.updatedAt || source.updatedAt < ExecCount))
+          runTop(source);
+      } else if (state === PENDING) lookUpstream(source, ignore);
+    }
+  }
+}
+function markDownstream(node) {
+  const runningTransition = Transition && Transition.running;
+  for (let i = 0; i < node.observers.length; i += 1) {
+    const o = node.observers[i];
+    if (runningTransition ? !o.tState : !o.state) {
+      if (runningTransition) o.tState = PENDING;
+      else o.state = PENDING;
+      if (o.pure) Updates.push(o);
+      else Effects.push(o);
+      o.observers && markDownstream(o);
+    }
+  }
+}
+function cleanNode(node) {
+  let i;
+  if (node.sources) {
+    while (node.sources.length) {
+      const source = node.sources.pop(),
+        index = node.sourceSlots.pop(),
+        obs = source.observers;
+      if (obs && obs.length) {
+        const n = obs.pop(),
+          s = source.observerSlots.pop();
+        if (index < obs.length) {
+          n.sourceSlots[s] = index;
+          obs[index] = n;
+          source.observerSlots[index] = s;
+        }
+      }
+    }
+  }
+  if (node.tOwned) {
+    for (i = node.tOwned.length - 1; i >= 0; i--) cleanNode(node.tOwned[i]);
+    delete node.tOwned;
+  }
+  if (Transition && Transition.running && node.pure) {
+    reset(node, true);
+  } else if (node.owned) {
+    for (i = node.owned.length - 1; i >= 0; i--) cleanNode(node.owned[i]);
+    node.owned = null;
+  }
+  if (node.cleanups) {
+    for (i = node.cleanups.length - 1; i >= 0; i--) node.cleanups[i]();
+    node.cleanups = null;
+  }
+  if (Transition && Transition.running) node.tState = 0;
+  else node.state = 0;
+}
+function reset(node, top) {
+  if (!top) {
+    node.tState = 0;
+    Transition.disposed.add(node);
+  }
+  if (node.owned) {
+    for (let i = 0; i < node.owned.length; i++) reset(node.owned[i]);
+  }
+}
+function castError(err) {
+  if (err instanceof Error) return err;
+  return new Error(typeof err === "string" ? err : "Unknown error", {
+    cause: err
+  });
+}
+function runErrors(err, fns, owner) {
+  try {
+    for (const f of fns) f(err);
+  } catch (e) {
+    handleError(e, (owner && owner.owner) || null);
+  }
+}
+function handleError(err, owner = Owner) {
+  const fns = ERROR && owner && owner.context && owner.context[ERROR];
+  const error = castError(err);
+  if (!fns) throw error;
+  if (Effects)
+    Effects.push({
+      fn() {
+        runErrors(error, fns, owner);
+      },
+      state: STALE
+    });
+  else runErrors(error, fns, owner);
+}
+function resolveChildren(children) {
+  if (typeof children === "function" && !children.length) return resolveChildren(children());
+  if (Array.isArray(children)) {
+    const results = [];
+    for (let i = 0; i < children.length; i++) {
+      const result = resolveChildren(children[i]);
+      Array.isArray(result) ? results.push.apply(results, result) : results.push(result);
+    }
+    return results;
+  }
+  return children;
+}
+function createProvider(id, options) {
+  return function provider(props) {
+    let res;
+    createRenderEffect(
+      () =>
+        (res = untrack(() => {
+          Owner.context = {
+            ...Owner.context,
+            [id]: props.value
+          };
+          return children(() => props.children);
+        })),
+      undefined
+    );
+    return res;
+  };
+}
+function onError(fn) {
+  ERROR || (ERROR = Symbol("error"));
+  if (Owner === null);
+  else if (Owner.context === null || !Owner.context[ERROR]) {
+    Owner.context = {
+      ...Owner.context,
+      [ERROR]: [fn]
+    };
+    mutateContext(Owner, ERROR, [fn]);
+  } else Owner.context[ERROR].push(fn);
+}
+function mutateContext(o, key, value) {
+  if (o.owned) {
+    for (let i = 0; i < o.owned.length; i++) {
+      if (o.owned[i].context === o.context) mutateContext(o.owned[i], key, value);
+      if (!o.owned[i].context) {
+        o.owned[i].context = o.context;
+        mutateContext(o.owned[i], key, value);
+      } else if (!o.owned[i].context[key]) {
+        o.owned[i].context[key] = value;
+        mutateContext(o.owned[i], key, value);
+      }
+    }
+  }
+}
+
+function observable(input) {
+  return {
+    subscribe(observer) {
+      if (!(observer instanceof Object) || observer == null) {
+        throw new TypeError("Expected the observer to be an object.");
+      }
+      const handler =
+        typeof observer === "function" ? observer : observer.next && observer.next.bind(observer);
+      if (!handler) {
+        return {
+          unsubscribe() {}
+        };
+      }
+      const dispose = createRoot(disposer => {
+        createEffect(() => {
+          const v = input();
+          untrack(() => handler(v));
+        });
+        return disposer;
+      });
+      if (getOwner()) onCleanup(dispose);
+      return {
+        unsubscribe() {
+          dispose();
+        }
+      };
+    },
+    [Symbol.observable || "@@observable"]() {
+      return this;
+    }
+  };
+}
+function from(producer, initalValue = undefined) {
+  const [s, set] = createSignal(initalValue, {
+    equals: false
+  });
+  if ("subscribe" in producer) {
+    const unsub = producer.subscribe(v => set(() => v));
+    onCleanup(() => ("unsubscribe" in unsub ? unsub.unsubscribe() : unsub()));
+  } else {
+    const clean = producer(set);
+    onCleanup(clean);
+  }
+  return s;
+}
+
+const FALLBACK = Symbol("fallback");
+function dispose(d) {
+  for (let i = 0; i < d.length; i++) d[i]();
+}
+function mapArray(list, mapFn, options = {}) {
+  let items = [],
+    mapped = [],
+    disposers = [],
+    len = 0,
+    indexes = mapFn.length > 1 ? [] : null;
+  onCleanup(() => dispose(disposers));
+  return () => {
+    let newItems = list() || [],
+      newLen = newItems.length,
+      i,
+      j;
+    newItems[$TRACK];
+    return untrack(() => {
+      let newIndices, newIndicesNext, temp, tempdisposers, tempIndexes, start, end, newEnd, item;
+      if (newLen === 0) {
+        if (len !== 0) {
+          dispose(disposers);
+          disposers = [];
+          items = [];
+          mapped = [];
+          len = 0;
+          indexes && (indexes = []);
+        }
+        if (options.fallback) {
+          items = [FALLBACK];
+          mapped[0] = createRoot(disposer => {
+            disposers[0] = disposer;
+            return options.fallback();
+          });
+          len = 1;
+        }
+      } else if (len === 0) {
+        mapped = new Array(newLen);
+        for (j = 0; j < newLen; j++) {
+          items[j] = newItems[j];
+          mapped[j] = createRoot(mapper);
+        }
+        len = newLen;
+      } else {
+        temp = new Array(newLen);
+        tempdisposers = new Array(newLen);
+        indexes && (tempIndexes = new Array(newLen));
+        for (
+          start = 0, end = Math.min(len, newLen);
+          start < end && items[start] === newItems[start];
+          start++
+        );
+        for (
+          end = len - 1, newEnd = newLen - 1;
+          end >= start && newEnd >= start && items[end] === newItems[newEnd];
+          end--, newEnd--
+        ) {
+          temp[newEnd] = mapped[end];
+          tempdisposers[newEnd] = disposers[end];
+          indexes && (tempIndexes[newEnd] = indexes[end]);
+        }
+        newIndices = new Map();
+        newIndicesNext = new Array(newEnd + 1);
+        for (j = newEnd; j >= start; j--) {
+          item = newItems[j];
+          i = newIndices.get(item);
+          newIndicesNext[j] = i === undefined ? -1 : i;
+          newIndices.set(item, j);
+        }
+        for (i = start; i <= end; i++) {
+          item = items[i];
+          j = newIndices.get(item);
+          if (j !== undefined && j !== -1) {
+            temp[j] = mapped[i];
+            tempdisposers[j] = disposers[i];
+            indexes && (tempIndexes[j] = indexes[i]);
+            j = newIndicesNext[j];
+            newIndices.set(item, j);
+          } else disposers[i]();
+        }
+        for (j = start; j < newLen; j++) {
+          if (j in temp) {
+            mapped[j] = temp[j];
+            disposers[j] = tempdisposers[j];
+            if (indexes) {
+              indexes[j] = tempIndexes[j];
+              indexes[j](j);
+            }
+          } else mapped[j] = createRoot(mapper);
+        }
+        mapped = mapped.slice(0, (len = newLen));
+        items = newItems.slice(0);
+      }
+      return mapped;
+    });
+    function mapper(disposer) {
+      disposers[j] = disposer;
+      if (indexes) {
+        const [s, set] = createSignal(j);
+        indexes[j] = set;
+        return mapFn(newItems[j], s);
+      }
+      return mapFn(newItems[j]);
+    }
+  };
+}
+function indexArray(list, mapFn, options = {}) {
+  let items = [],
+    mapped = [],
+    disposers = [],
+    signals = [],
+    len = 0,
+    i;
+  onCleanup(() => dispose(disposers));
+  return () => {
+    const newItems = list() || [],
+      newLen = newItems.length;
+    newItems[$TRACK];
+    return untrack(() => {
+      if (newLen === 0) {
+        if (len !== 0) {
+          dispose(disposers);
+          disposers = [];
+          items = [];
+          mapped = [];
+          len = 0;
+          signals = [];
+        }
+        if (options.fallback) {
+          items = [FALLBACK];
+          mapped[0] = createRoot(disposer => {
+            disposers[0] = disposer;
+            return options.fallback();
+          });
+          len = 1;
+        }
+        return mapped;
+      }
+      if (items[0] === FALLBACK) {
+        disposers[0]();
+        disposers = [];
+        items = [];
+        mapped = [];
+        len = 0;
+      }
+      for (i = 0; i < newLen; i++) {
+        if (i < items.length && items[i] !== newItems[i]) {
+          signals[i](() => newItems[i]);
+        } else if (i >= items.length) {
+          mapped[i] = createRoot(mapper);
+        }
+      }
+      for (; i < items.length; i++) {
+        disposers[i]();
+      }
+      len = signals.length = disposers.length = newLen;
+      items = newItems.slice(0);
+      return (mapped = mapped.slice(0, len));
+    });
+    function mapper(disposer) {
+      disposers[i] = disposer;
+      const [s, set] = createSignal(newItems[i]);
+      signals[i] = set;
+      return mapFn(s, i);
+    }
+  };
+}
+
+let hydrationEnabled = false;
+function enableHydration() {
+  hydrationEnabled = true;
+}
+function createComponent(Comp, props) {
+  if (hydrationEnabled) {
+    if (sharedConfig.context) {
+      const c = sharedConfig.context;
+      setHydrateContext(nextHydrateContext());
+      const r = untrack(() => Comp(props || {}));
+      setHydrateContext(c);
+      return r;
+    }
+  }
+  return untrack(() => Comp(props || {}));
+}
+function trueFn() {
+  return true;
+}
+const propTraps = {
+  get(_, property, receiver) {
+    if (property === $PROXY) return receiver;
+    return _.get(property);
+  },
+  has(_, property) {
+    if (property === $PROXY) return true;
+    return _.has(property);
+  },
+  set: trueFn,
+  deleteProperty: trueFn,
+  getOwnPropertyDescriptor(_, property) {
+    return {
+      configurable: true,
+      enumerable: true,
+      get() {
+        return _.get(property);
+      },
+      set: trueFn,
+      deleteProperty: trueFn
+    };
+  },
+  ownKeys(_) {
+    return _.keys();
+  }
+};
+function resolveSource(s) {
+  return !(s = typeof s === "function" ? s() : s) ? {} : s;
+}
+function resolveSources() {
+  for (let i = 0, length = this.length; i < length; ++i) {
+    const v = this[i]();
+    if (v !== undefined) return v;
+  }
+}
+function mergeProps(...sources) {
+  let proxy = false;
+  for (let i = 0; i < sources.length; i++) {
+    const s = sources[i];
+    proxy = proxy || (!!s && $PROXY in s);
+    sources[i] = typeof s === "function" ? ((proxy = true), createMemo(s)) : s;
+  }
+  if (SUPPORTS_PROXY && proxy) {
+    return new Proxy(
+      {
+        get(property) {
+          for (let i = sources.length - 1; i >= 0; i--) {
+            const v = resolveSource(sources[i])[property];
+            if (v !== undefined) return v;
+          }
+        },
+        has(property) {
+          for (let i = sources.length - 1; i >= 0; i--) {
+            if (property in resolveSource(sources[i])) return true;
+          }
+          return false;
+        },
+        keys() {
+          const keys = [];
+          for (let i = 0; i < sources.length; i++)
+            keys.push(...Object.keys(resolveSource(sources[i])));
+          return [...new Set(keys)];
+        }
+      },
+      propTraps
+    );
+  }
+  const sourcesMap = {};
+  const defined = Object.create(null);
+  for (let i = sources.length - 1; i >= 0; i--) {
+    const source = sources[i];
+    if (!source) continue;
+    const sourceKeys = Object.getOwnPropertyNames(source);
+    for (let i = sourceKeys.length - 1; i >= 0; i--) {
+      const key = sourceKeys[i];
+      if (key === "__proto__" || key === "constructor") continue;
+      const desc = Object.getOwnPropertyDescriptor(source, key);
+      if (!defined[key]) {
+        defined[key] = desc.get
+          ? {
+              enumerable: true,
+              configurable: true,
+              get: resolveSources.bind((sourcesMap[key] = [desc.get.bind(source)]))
+            }
+          : desc.value !== undefined
+          ? desc
+          : undefined;
+      } else {
+        const sources = sourcesMap[key];
+        if (sources) {
+          if (desc.get) sources.push(desc.get.bind(source));
+          else if (desc.value !== undefined) sources.push(() => desc.value);
+        }
+      }
+    }
+  }
+  const target = {};
+  const definedKeys = Object.keys(defined);
+  for (let i = definedKeys.length - 1; i >= 0; i--) {
+    const key = definedKeys[i],
+      desc = defined[key];
+    if (desc && desc.get) Object.defineProperty(target, key, desc);
+    else target[key] = desc ? desc.value : undefined;
+  }
+  return target;
+}
+function splitProps(props, ...keys) {
+  if (SUPPORTS_PROXY && $PROXY in props) {
+    const blocked = new Set(keys.length > 1 ? keys.flat() : keys[0]);
+    const res = keys.map(k => {
+      return new Proxy(
+        {
+          get(property) {
+            return k.includes(property) ? props[property] : undefined;
+          },
+          has(property) {
+            return k.includes(property) && property in props;
+          },
+          keys() {
+            return k.filter(property => property in props);
+          }
+        },
+        propTraps
+      );
+    });
+    res.push(
+      new Proxy(
+        {
+          get(property) {
+            return blocked.has(property) ? undefined : props[property];
+          },
+          has(property) {
+            return blocked.has(property) ? false : property in props;
+          },
+          keys() {
+            return Object.keys(props).filter(k => !blocked.has(k));
+          }
+        },
+        propTraps
+      )
+    );
+    return res;
+  }
+  const otherObject = {};
+  const objects = keys.map(() => ({}));
+  for (const propName of Object.getOwnPropertyNames(props)) {
+    const desc = Object.getOwnPropertyDescriptor(props, propName);
+    const isDefaultDesc =
+      !desc.get && !desc.set && desc.enumerable && desc.writable && desc.configurable;
+    let blocked = false;
+    let objectIndex = 0;
+    for (const k of keys) {
+      if (k.includes(propName)) {
+        blocked = true;
+        isDefaultDesc
+          ? (objects[objectIndex][propName] = desc.value)
+          : Object.defineProperty(objects[objectIndex], propName, desc);
+      }
+      ++objectIndex;
+    }
+    if (!blocked) {
+      isDefaultDesc
+        ? (otherObject[propName] = desc.value)
+        : Object.defineProperty(otherObject, propName, desc);
+    }
+  }
+  return [...objects, otherObject];
+}
+function lazy(fn) {
+  let comp;
+  let p;
+  const wrap = props => {
+    const ctx = sharedConfig.context;
+    if (ctx) {
+      const [s, set] = createSignal();
+      sharedConfig.count || (sharedConfig.count = 0);
+      sharedConfig.count++;
+      (p || (p = fn())).then(mod => {
+        !sharedConfig.done && setHydrateContext(ctx);
+        sharedConfig.count--;
+        set(() => mod.default);
+        setHydrateContext();
+      });
+      comp = s;
+    } else if (!comp) {
+      const [s] = createResource(() => (p || (p = fn())).then(mod => mod.default));
+      comp = s;
+    }
+    let Comp;
+    return createMemo(() =>
+      (Comp = comp())
+        ? untrack(() => {
+            if (IS_DEV);
+            if (!ctx || sharedConfig.done) return Comp(props);
+            const c = sharedConfig.context;
+            setHydrateContext(ctx);
+            const r = Comp(props);
+            setHydrateContext(c);
+            return r;
+          })
+        : ""
+    );
+  };
+  wrap.preload = () => p || ((p = fn()).then(mod => (comp = () => mod.default)), p);
+  return wrap;
+}
+let counter = 0;
+function createUniqueId() {
+  const ctx = sharedConfig.context;
+  return ctx ? sharedConfig.getNextContextId() : `cl-${counter++}`;
+}
+
+const narrowedError = name => `Stale read from <${name}>.`;
+function For(props) {
+  const fallback = "fallback" in props && {
+    fallback: () => props.fallback
+  };
+  return createMemo(mapArray(() => props.each, props.children, fallback || undefined));
+}
+function Index(props) {
+  const fallback = "fallback" in props && {
+    fallback: () => props.fallback
+  };
+  return createMemo(indexArray(() => props.each, props.children, fallback || undefined));
+}
+function Show(props) {
+  const keyed = props.keyed;
+  const conditionValue = createMemo(() => props.when, undefined, undefined);
+  const condition = keyed
+    ? conditionValue
+    : createMemo(conditionValue, undefined, {
+        equals: (a, b) => !a === !b
+      });
+  return createMemo(
+    () => {
+      const c = condition();
+      if (c) {
+        const child = props.children;
+        const fn = typeof child === "function" && child.length > 0;
+        return fn
+          ? untrack(() =>
+              child(
+                keyed
+                  ? c
+                  : () => {
+                      if (!untrack(condition)) throw narrowedError("Show");
+                      return conditionValue();
+                    }
+              )
+            )
+          : child;
+      }
+      return props.fallback;
+    },
+    undefined,
+    undefined
+  );
+}
+function Switch(props) {
+  const chs = children(() => props.children);
+  const switchFunc = createMemo(() => {
+    const ch = chs();
+    const mps = Array.isArray(ch) ? ch : [ch];
+    let func = () => undefined;
+    for (let i = 0; i < mps.length; i++) {
+      const index = i;
+      const mp = mps[i];
+      const prevFunc = func;
+      const conditionValue = createMemo(
+        () => (prevFunc() ? undefined : mp.when),
+        undefined,
+        undefined
+      );
+      const condition = mp.keyed
+        ? conditionValue
+        : createMemo(conditionValue, undefined, {
+            equals: (a, b) => !a === !b
+          });
+      func = () => prevFunc() || (condition() ? [index, conditionValue, mp] : undefined);
+    }
+    return func;
+  });
+  return createMemo(
+    () => {
+      const sel = switchFunc()();
+      if (!sel) return props.fallback;
+      const [index, conditionValue, mp] = sel;
+      const child = mp.children;
+      const fn = typeof child === "function" && child.length > 0;
+      return fn
+        ? untrack(() =>
+            child(
+              mp.keyed
+                ? conditionValue()
+                : () => {
+                    if (untrack(switchFunc)()?.[0] !== index) throw narrowedError("Match");
+                    return conditionValue();
+                  }
+            )
+          )
+        : child;
+    },
+    undefined,
+    undefined
+  );
+}
+function Match(props) {
+  return props;
+}
+let Errors;
+function resetErrorBoundaries() {
+  Errors && [...Errors].forEach(fn => fn());
+}
+function ErrorBoundary(props) {
+  let err;
+  if (sharedConfig.context && sharedConfig.load)
+    err = sharedConfig.load(sharedConfig.getContextId());
+  const [errored, setErrored] = createSignal(err, undefined);
+  Errors || (Errors = new Set());
+  Errors.add(setErrored);
+  onCleanup(() => Errors.delete(setErrored));
+  return createMemo(
+    () => {
+      let e;
+      if ((e = errored())) {
+        const f = props.fallback;
+        return typeof f === "function" && f.length ? untrack(() => f(e, () => setErrored())) : f;
+      }
+      return catchError(() => props.children, setErrored);
+    },
+    undefined,
+    undefined
+  );
+}
+
+const suspenseListEquals = (a, b) =>
+  a.showContent === b.showContent && a.showFallback === b.showFallback;
+const SuspenseListContext = /* #__PURE__ */ createContext();
+function SuspenseList(props) {
+  let [wrapper, setWrapper] = createSignal(() => ({
+      inFallback: false
+    })),
+    show;
+  const listContext = useContext(SuspenseListContext);
+  const [registry, setRegistry] = createSignal([]);
+  if (listContext) {
+    show = listContext.register(createMemo(() => wrapper()().inFallback));
+  }
+  const resolved = createMemo(
+    prev => {
+      const reveal = props.revealOrder,
+        tail = props.tail,
+        { showContent = true, showFallback = true } = show ? show() : {},
+        reg = registry(),
+        reverse = reveal === "backwards";
+      if (reveal === "together") {
+        const all = reg.every(inFallback => !inFallback());
+        const res = reg.map(() => ({
+          showContent: all && showContent,
+          showFallback
+        }));
+        res.inFallback = !all;
+        return res;
+      }
+      let stop = false;
+      let inFallback = prev.inFallback;
+      const res = [];
+      for (let i = 0, len = reg.length; i < len; i++) {
+        const n = reverse ? len - i - 1 : i,
+          s = reg[n]();
+        if (!stop && !s) {
+          res[n] = {
+            showContent,
+            showFallback
+          };
+        } else {
+          const next = !stop;
+          if (next) inFallback = true;
+          res[n] = {
+            showContent: next,
+            showFallback: !tail || (next && tail === "collapsed") ? showFallback : false
+          };
+          stop = true;
+        }
+      }
+      if (!stop) inFallback = false;
+      res.inFallback = inFallback;
+      return res;
+    },
+    {
+      inFallback: false
+    }
+  );
+  setWrapper(() => resolved);
+  return createComponent(SuspenseListContext.Provider, {
+    value: {
+      register: inFallback => {
+        let index;
+        setRegistry(registry => {
+          index = registry.length;
+          return [...registry, inFallback];
+        });
+        return createMemo(() => resolved()[index], undefined, {
+          equals: suspenseListEquals
+        });
+      }
+    },
+    get children() {
+      return props.children;
+    }
+  });
+}
+function Suspense(props) {
+  let counter = 0,
+    show,
+    ctx,
+    p,
+    flicker,
+    error;
+  const [inFallback, setFallback] = createSignal(false),
+    SuspenseContext = getSuspenseContext(),
+    store = {
+      increment: () => {
+        if (++counter === 1) setFallback(true);
+      },
+      decrement: () => {
+        if (--counter === 0) setFallback(false);
+      },
+      inFallback,
+      effects: [],
+      resolved: false
+    },
+    owner = getOwner();
+  if (sharedConfig.context && sharedConfig.load) {
+    const key = sharedConfig.getContextId();
+    let ref = sharedConfig.load(key);
+    if (ref) {
+      if (typeof ref !== "object" || ref.status !== "success") p = ref;
+      else sharedConfig.gather(key);
+    }
+    if (p && p !== "$$f") {
+      const [s, set] = createSignal(undefined, {
+        equals: false
+      });
+      flicker = s;
+      p.then(
+        () => {
+          if (sharedConfig.done) return set();
+          sharedConfig.gather(key);
+          setHydrateContext(ctx);
+          set();
+          setHydrateContext();
+        },
+        err => {
+          error = err;
+          set();
+        }
+      );
+    }
+  }
+  const listContext = useContext(SuspenseListContext);
+  if (listContext) show = listContext.register(store.inFallback);
+  let dispose;
+  onCleanup(() => dispose && dispose());
+  return createComponent(SuspenseContext.Provider, {
+    value: store,
+    get children() {
+      return createMemo(() => {
+        if (error) throw error;
+        ctx = sharedConfig.context;
+        if (flicker) {
+          flicker();
+          return (flicker = undefined);
+        }
+        if (ctx && p === "$$f") setHydrateContext();
+        const rendered = createMemo(() => props.children);
+        return createMemo(prev => {
+          const inFallback = store.inFallback(),
+            { showContent = true, showFallback = true } = show ? show() : {};
+          if ((!inFallback || (p && p !== "$$f")) && showContent) {
+            store.resolved = true;
+            dispose && dispose();
+            dispose = ctx = p = undefined;
+            resumeEffects(store.effects);
+            return rendered();
+          }
+          if (!showFallback) return;
+          if (dispose) return prev;
+          return createRoot(disposer => {
+            dispose = disposer;
+            if (ctx) {
+              setHydrateContext({
+                id: ctx.id + "F",
+                count: 0
+              });
+              ctx = undefined;
+            }
+            return props.fallback;
+          }, owner);
+        });
+      });
+    }
+  });
+}
+
+const DEV = undefined;
+
+export {
+  $DEVCOMP,
+  $PROXY,
+  $TRACK,
+  DEV,
+  ErrorBoundary,
+  For,
+  Index,
+  Match,
+  Show,
+  Suspense,
+  SuspenseList,
+  Switch,
+  batch,
+  cancelCallback,
+  catchError,
+  children,
+  createComponent,
+  createComputed,
+  createContext,
+  createDeferred,
+  createEffect,
+  createMemo,
+  createReaction,
+  createRenderEffect,
+  createResource,
+  createRoot,
+  createSelector,
+  createSignal,
+  createUniqueId,
+  enableExternalSource,
+  enableHydration,
+  enableScheduling,
+  equalFn,
+  from,
+  getListener,
+  getOwner,
+  indexArray,
+  lazy,
+  mapArray,
+  mergeProps,
+  observable,
+  on,
+  onCleanup,
+  onError,
+  onMount,
+  requestCallback,
+  resetErrorBoundaries,
+  runWithOwner,
+  sharedConfig,
+  splitProps,
+  startTransition,
+  untrack,
+  useContext,
+  useTransition
+};
