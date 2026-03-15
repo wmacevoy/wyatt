@@ -11,6 +11,15 @@ import { parseProgram } from "./parser.js";
 
 var _cjsRequire = (typeof require !== "undefined") ? require : null;
 
+// Node ESM: require isn't global, but createRequire can provide it.
+// Browsers: import.meta exists but "module" doesn't — skip gracefully.
+if (!_cjsRequire && typeof process !== "undefined" && typeof process.versions !== "undefined" && process.versions.node) {
+  try {
+    var _m = await import("module");
+    if (_m.createRequire) _cjsRequire = _m.createRequire(import.meta.url);
+  } catch(e) {}
+}
+
 // ── loadString ──────────────────────────────────────────────
 // Parse text as a Prolog program and add each clause to engine.
 // Returns the number of clauses loaded.
