@@ -26,8 +26,8 @@ jobs:
 
       - name: Run native C y8_qjson tests
         run: |
-          gcc -O2 -Wall -std=c11 -o native/test_y8_qjson native/y8_qjson.c native/test_y8_qjson.c -lm
-          ./native/test_y8
+          gcc -O2 -Wall -std=c11 -frounding-math -o native/test_y8_qjson native/y8_qjson.c native/test_y8_qjson.c -lm
+          ./native/test_y8_qjson
 
       - name: Run native C core tests
         run: |
@@ -56,8 +56,8 @@ jobs:
 
       - name: Run native C y8_qjson tests
         run: |
-          gcc -O2 -Wall -std=c11 -o native/test_y8_qjson native/y8_qjson.c native/test_y8_qjson.c -lm
-          ./native/test_y8
+          gcc -O2 -Wall -std=c11 -frounding-math -o native/test_y8_qjson native/y8_qjson.c native/test_y8_qjson.c -lm
+          ./native/test_y8_qjson
 
   # ── Alpine (musl libc) — C + Python only ─────────────────
   # Alpine's system Node is too old for ESM imports.
@@ -75,7 +75,7 @@ jobs:
       - name: C tests
         run: |
           gcc -O2 -Wall -std=c11 -o native/test_core native/test_core.c native/prolog_core.c && ./native/test_core
-          gcc -O2 -Wall -std=c11 -o native/test_y8_qjson native/y8_qjson.c native/test_y8_qjson.c -lm && ./native/test_y8
+          gcc -O2 -Wall -std=c11 -frounding-math -o native/test_y8_qjson native/y8_qjson.c native/test_y8_qjson.c -lm && ./native/test_y8_qjson
 
       - name: Python tests
         run: |
