@@ -308,19 +308,28 @@ No duplicate keys.
 {"a":1,"b":2}
 ```
 
-### Type identity
+### Value identity vs text identity
 
-Different type suffixes create different values:
+QJSON has two notions of equality:
 
-| Expression | Equal? |
-|-----------|--------|
-| `42` vs `42` | yes (same double) |
-| `1` vs `1.0` | yes (same double) |
-| `42` vs `42N` | **no** (double ≠ BigInt) |
-| `42N` vs `42M` | **no** (BigInt ≠ BigDecimal) |
-| `0.5M` vs `0.50M` | yes (same BigDecimal) |
-| `"hello"` vs `"hello"` | yes |
-| `0jSGVsbG8` vs `0jSGVsbG8` | yes (same bytes) |
+**Text identity** (canonical form, for document hashing):
+the type suffix is part of the text.  `"42"` and `"42N"` are
+different QJSON strings → different SHA256.
+
+**Value identity** (SQL, for queries):  the type suffix is
+representation metadata.  `42`, `42N`, `42M` are all "five
+times eight plus two" → same numeric value → same `[lo, str, hi]`
+projection.
+
+| Expression | Text equal? | Value equal? |
+|-----------|-------------|-------------|
+| `42` vs `42` | yes | yes |
+| `1` vs `1.0` | yes (same canonical form) | yes |
+| `42` vs `42N` | **no** | **yes** (same number) |
+| `42N` vs `42M` | **no** | **yes** (same number) |
+| `0.5M` vs `0.50M` | **no** (`0.5M` vs `0.50M`) | **yes** (same projection) |
+| `"hello"` vs `"hello"` | yes | yes |
+| `0jSGVsbG8` vs `0jSGVsbG8` | yes | yes |
 
 ### Summary
 
@@ -417,28 +426,66 @@ When the exact value IS an IEEE double: `round_down = round_up = value`.
 
 ## WHERE efficiency
 
-The `[lo, str, hi]` representation enables three tiers of
-filtering, each eliminating rows before the next fires:
+The `[lo, str, hi]` projection splits comparisons into two
+categories: ordering (number-line) and equality (data identity).
+
+### Equality and inequality (data question)
+
+The projection IS the value.  Two numbers are equal iff their
+projections match — no interval arithmetic, no string decode:
+
+```sql
+-- x == y: all three columns match
+x == y ≡ lo(x) = lo(y) AND hi(x) = hi(y)
+          AND ((str(x) IS NULL AND str(y) IS NULL)
+               OR str(x) = str(y))
+
+-- x != y: NOT of the above
+x != y ≡ NOT (x == y)
+```
+
+This lands entirely in the database.  Indexed columns, no
+application-side decode.  Type suffix doesn't matter — `5`,
+`5N`, `5M` all project to `[5.0, NULL, 5.0]` → equal.
+
+### Ordering (number-line question)
+
+Three tiers, each avoiding work for the next:
+
+- **`[brackets]`** — indexed WHERE on `lo`/`hi` REAL columns.
+  Necessary condition.  Does 99.999% of the filtering.
+- **`{braces}`** — both values are exact doubles (`lo == hi`).
+  Avoids string decode.  Resolves 99.999% of the remainder.
+- **`val(x) <op> val(y)`** — full comparison for the ~0.001%
+  overlap zone.
 
 ```
-x < y  ≡  (hi(x) < lo(y))  OR  (lo(x) < hi(y) AND cmp(x,y) < 0)
-x <= y ≡  (hi(x) <= lo(y)) OR  (lo(x) <= hi(y) AND cmp(x,y) <= 0)
-x = y  ≡  (hi(x) >= lo(y) AND hi(y) >= lo(x)) AND cmp(x,y) = 0
-x != y ≡  (hi(x) < lo(y) OR hi(y) < lo(x)) OR  cmp(x,y) != 0
+val(x) = lo(x) if lo(x) == hi(x) else decode(str(x))
 ```
 
-Where `cmp(x,y)` is:
-
 ```
-if hi(x) < lo(y): return -1          -- intervals prove x < y
-if lo(x) > hi(y): return  1          -- intervals prove x > y
-if lo(x) == hi(x) and lo(y) == hi(y): return 0  -- both exact, same double
-return y8_decimal_cmp(str(x), str(y)) -- string comparison (overlap zone)
+x <  y ≡ [lo(x) < hi(y)]  AND ({hi(x) < lo(y)}  OR val(x) < val(y))
+x <= y ≡ [lo(x) <= hi(y)] AND ({hi(x) <= lo(y)} OR val(x) <= val(y))
+x >  y ≡ [hi(x) > lo(y)]  AND ({lo(x) > hi(y)}  OR val(x) > val(y))
+x >= y ≡ [hi(x) >= lo(y)] AND ({lo(x) >= hi(y)} OR val(x) >= val(y))
 ```
 
-- The interval check (indexed REAL columns) handles 99.999%
-  of comparisons.
-- The `lo == hi` check resolves the next tier — both values
-  are exact doubles, no string needed.
-- `y8_decimal_cmp` only fires in the ~0.001% overlap zone
-  where two non-exact values project to overlapping intervals.
+The `[brackets]` are the SQL WHERE clause — indexed, fast,
+eliminates most rows.  The `{braces}` check avoids string
+decode when both values are exact doubles.  `val()` only
+fires when intervals overlap and at least one value is
+non-exact.
+
+### y8_cmp (C API)
+
+```c
+int y8_cmp(a_lo, a_hi, a_str, a_len, b_lo, b_hi, b_str, b_len) {
+    if (a_hi < b_lo) return -1;                  // [brackets]: separated
+    if (a_lo > b_hi) return  1;                  // [brackets]: separated
+    if (a_lo == a_hi && b_lo == b_hi) return 0;  // {braces}: both exact
+    return y8_decimal_cmp(a_str, a_len, b_str, b_len);  // val() decode
+}
+```
+
+All ordering operators: `y8_cmp(...) <op> 0`.
+Equality: compare `[lo, str, hi]` columns directly.
