@@ -40,23 +40,6 @@ Lowercase accepted, canonicalized to uppercase on output.
 The suffix must not be followed by an alphanumeric character
 (`42N` is BigInt, `42Name` is a parse error).
 
-**Storage:** The raw decimal string is preserved through the
-full round-trip: parse → engine → persist → restore → print.
-No precision loss.
-
-**Interval projection:** For database storage, each suffixed
-number projects to `[lo, str, hi]`:
-
-- `lo` = largest IEEE double ≤ exact value (REAL, indexed)
-- `str` = exact string representation (TEXT, authoritative)
-- `hi` = smallest IEEE double ≥ exact value (REAL, indexed)
-
-`lo` and `hi` make search efficient — indexed REAL columns
-handle 99.999% of comparisons.  `str` is the authority for
-the ~0.001% boundary zone where intervals overlap.
-Exact doubles get point intervals (`lo == hi`).  See
-`docs/qsql-intervals.md` for the full model.
-
 ## Blobs: `0j` prefix
 
 Binary data encoded with JS64 — a base-64 encoding that uses
@@ -90,6 +73,8 @@ alphabet.  The full JS64 encoding produces a leading `$`
 To decode a `0j` literal: prepend `$`, then JS64-decode.
 To encode a blob for QJSON: JS64-encode, strip leading `$`,
 prepend `0j`.
+
+Note that leading `$` are significant — even though they represent six zero bits, the length of the JS64 encoding defines the size of the blob: `size(blob) = floor(6*length(encoding)/8)`. `0j` is a 0-length (empty) blob.
 
 ### Why not base64?
 
@@ -166,24 +151,188 @@ typedef enum {
 All three implementations parse and stringify the same format.
 The C implementation is the reference.
 
-## Grammar (informal)
+## Grammar
+
+JSON defines its representation in terms of characters (Unicode
+codepoints), leaving the byte encoding up to the implementation,
+and notably limiting `\u` escapes to 4 hex digits (BMP only).
+
+QJSON defines its grammar in terms of bytes.  A language may
+keep this representation as a string, but QJSON is primarily
+about serialization — transport and storage are sequences of
+bytes.
 
 ```
-value     = null | true | false | number | bignum | blob
-          | string | array | object
+value     = ws (null | boolean | number | string | blob
+               | array | object) ws
 
-number    = JSON number (no suffix)
-bignum    = number ("N" | "M" | "L")       // case-insensitive
-blob      = "0" ("j" | "J") js64-chars+
+null      = 'null'
+boolean   = 'false' | 'true'
 
-string    = '"' chars '"'
+number    = '-'? digits ('.' digits)? (('e'|'E') ('+'|'-')? digits)?
+            ('N'|'n'|'M'|'m'|'L'|'l')?
+digits    = [0-9]+
+
+blob      = '0' ('j'|'J') js64*
+js64      = [$0-9A-Z_a-z]
+
+string    = '"' character* '"'
+character = <any UTF-8 byte sequence except '"' and '\'>
+          | '\"' | '\\' | '\/' | '\b' | '\f' | '\n' | '\r' | '\t'
+          | '\u' hex hex hex hex
+          | '\u{' hex+ '}'
+hex       = [0-9A-Fa-f]
+
 array     = '[' (value (',' value)* ','?)? ']'
 object    = '{' (pair (',' pair)* ','?)? '}'
 pair      = (string | ident) ':' value
 ident     = [a-zA-Z_$] [a-zA-Z0-9_$]*
 
-js64-chars = [$0-9A-Z_a-z]+
-
-comment   = '//' to-eol | '/*' (comment | any)* '*/'
-ws        = spaces, tabs, newlines, comments
+comment   = '//' <to end of line>
+          | '/*' (comment | <any>)* '*/'
+ws        = (space | tab | newline | comment)*
 ```
+
+Notes:
+- `ws` is implicit between all tokens.
+- Block comments nest (`/* outer /* inner */ still */`).
+- Trailing commas are permitted in arrays and objects.
+- `\u{hex+}` extends JSON's `\uXXXX` to all Unicode codepoints.
+- No suffix after a number means plain IEEE 754 double.
+- A number with suffix is a distinct type (`42` ≠ `42N` ≠ `42M`).
+- `0j` is unambiguous: no legal number has `j`/`J` after `0`.
+
+## Canonical representation
+
+The canonical form is a deterministic byte sequence for each
+value.  Goal: `SHA256(canon(x)) == SHA256(canon(y))` iff
+`x` and `y` represent the same value.
+
+### Encoding
+
+UTF-8 bytes.  No BOM.
+
+### Whitespace and comments
+
+None.  No spaces, tabs, newlines, or comments.
+
+### null, boolean
+
+`null`, `true`, `false` — lowercase, no variants.
+
+### Number (no suffix)
+
+Plain numbers are IEEE 754 doubles.  `1` and `1.0` are the
+same value (same double).
+
+Canonical form follows the ECMAScript `Number.toString()` rules:
+the shortest decimal string that round-trips to the same double.
+
+| Value | Canonical | Not canonical |
+|-------|-----------|---------------|
+| forty-two | `42` | `42.0`, `042`, `4.2e1` |
+| one-tenth | `0.1` | `.1`, `0.10` |
+| negative zero | `0` | `-0` |
+| 10^20 | `100000000000000000000` | `1e20` |
+| 10^21 | `1e+21` | `1000000000000000000000` |
+| 5 × 10^-7 | `5e-7` | `0.0000005` |
+
+Scientific notation is used when the exponent is ≥ 21 or ≤ -7
+(ECMAScript rules).
+
+### BigInt (N suffix)
+
+Canonical: minimal integer, no leading zeros, no `+` sign,
+uppercase suffix.
+
+| Value | Canonical | Not canonical |
+|-------|-----------|---------------|
+| forty-two | `42N` | `042N`, `42n`, `+42N` |
+| zero | `0N` | `00N` |
+
+### BigDecimal (M suffix)
+
+Canonical: strip trailing fractional zeros, strip unnecessary
+decimal point, no leading zeros (except `0.x`), no `+` sign,
+no scientific notation, uppercase suffix.
+
+QuickJS BigDecimal (libbf) normalizes internally —
+`0.50m === 0.5m` is `true`.  Same value, same canonical form.
+
+| Value | Canonical | Not canonical |
+|-------|-----------|---------------|
+| 67432.5 | `67432.5M` | `67432.50M`, `067432.5M` |
+| forty-two | `42M` | `42.0M`, `42.00M` |
+| one-tenth | `0.1M` | `00.1M`, `0.10M` |
+
+### BigFloat (L suffix)
+
+Same rules as BigDecimal.  Uppercase `L` suffix.
+
+### Blob
+
+`0j` prefix (lowercase), followed by the JS64 body.
+JS64 encoding is deterministic for a given byte sequence.
+
+### String
+
+- Delimited by `"`
+- Escape only what is required:
+  - `\"` and `\\` (must escape)
+  - Control characters 0x00–0x1F as `\uXXXX` (lowercase hex)
+- Everything else: literal UTF-8 bytes
+- No `\/` escape (literal `/` instead)
+- No `\u{...}` in output (accepted on input, emitted as
+  literal UTF-8)
+- No surrogate pairs in output (use literal UTF-8 for
+  codepoints above U+FFFF)
+
+No Unicode normalization — bytes are compared raw.  If you
+need NFC equivalence, normalize before serialization.
+
+### Array
+
+Elements in order.  No trailing commas.  No whitespace.
+
+```
+[1,2,3]
+```
+
+### Object
+
+Keys sorted by UTF-8 byte order (ascending).  Always quoted
+(even valid identifiers).  No trailing commas.  No whitespace.
+No duplicate keys.
+
+```
+{"a":1,"b":2}
+```
+
+### Type identity
+
+Different type suffixes create different values:
+
+| Expression | Equal? |
+|-----------|--------|
+| `42` vs `42` | yes (same double) |
+| `1` vs `1.0` | yes (same double) |
+| `42` vs `42N` | **no** (double ≠ BigInt) |
+| `42N` vs `42M` | **no** (BigInt ≠ BigDecimal) |
+| `0.5M` vs `0.50M` | yes (same BigDecimal) |
+| `"hello"` vs `"hello"` | yes |
+| `0jSGVsbG8` vs `0jSGVsbG8` | yes (same bytes) |
+
+### Summary
+
+| Type | Canonical form |
+|------|---------------|
+| null | `null` |
+| boolean | `true` or `false` |
+| number | shortest round-trip decimal (ECMAScript rules) |
+| BigInt | minimal integer + `N` |
+| BigDecimal | normalized decimal + `M` (no trailing zeros) |
+| BigFloat | normalized decimal + `L` (no trailing zeros) |
+| blob | `0j` + JS64 body |
+| string | `"..."` minimal escapes, literal UTF-8 |
+| array | `[v,v,v]` |
+| object | `{"k":v,"k":v}` sorted keys, quoted |
