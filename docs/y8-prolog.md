@@ -1,189 +1,249 @@
 # y8-prolog — Ephemeral reactive Prolog
 
-y8-prolog is a Prolog dialect designed for reactive systems.
+y8-prolog is a Prolog dialect designed for embedded reactive systems.
 Rules are the program.  Facts are the state.  Signals flow
-through, trigger reactions, and vanish — no pollution, no
-cleanup.  Predicates can be selectively or globally frozen
-for security and parallelism.
+through, trigger reactions, and vanish.  Predicates can be
+selectively (mineralize) or globally (fossilize) frozen for
+security and parallelism.
 
-Same engine in JavaScript, Python, and C.  ~300 lines each.
-Zero dependencies.
+The engine has three primitives beyond standard Prolog:
+**ephemeral**, **react**, and **native**.  Everything else —
+persistence, tracing, metrics, I/O — is wiring.
 
-## Core ideas
+## Reactivity
 
-### Facts are state, rules are logic
+y8-prolog is reactive.  Every mutation and every event
+triggers `react` rules automatically.
 
-```prolog
-% State (dynamic — changes at runtime)
-temperature(kitchen, 22).
-temperature(bedroom, 18).
-
-% Logic (static — loaded once)
-cold(Room) :- temperature(Room, T), T < 20.
-```
-
-`assert` and `retract` mutate state.  Rules don't change
-after load (and can be frozen to enforce this).
-
-### Ephemeral — scoped assertion
-
-`ephemeral(Term)` asserts `Term`, runs the continuation, then
-retracts `Term` — regardless of success or failure.  The fact
-exists only for the duration of the query.
+### Three triggers
 
 ```prolog
-handle_signal(From, Fact) :-
-    ephemeral(signal(From, Fact)),
-    react.
+assert(Fact)      → triggers react(assert(Fact))
+retract(Fact)     → triggers react(retract(Fact))
+ephemeral(Event)  → triggers react(Event)
 ```
 
-After `handle_signal` completes, `signal(From, Fact)` is gone.
-No database write.  No cleanup needed.  This is y8-prolog's
-equivalent of a local variable in a transaction.
+`react` rules are ordinary Prolog clauses.  The engine finds
+all matching `react(...)` clauses and solves them.  Reactions
+can mutate state, emit events, send messages, and call native
+tools.
 
-### React — pattern-matched signal processing
+### react rules
 
 ```prolog
-react :- signal(From, reading(From, Type, Val, Ts)),
-         trusted(From),
-         retractall(reading(From, Type, _OldV, _OldTs)),
-         assert(reading(From, Type, Val, Ts)),
-         send(dashboard, reading(From, Type, Val, Ts)).
+% Persist every mutation (just two rules)
+react(assert(F))  :- native(db_insert, F).
+react(retract(F)) :- native(db_remove, F).
+
+% Trace every mutation
+react(assert(F))  :- native(log, assert, F).
+react(retract(F)) :- native(log, retract, F).
+
+% Process signals
+react(signal(From, reading(From, Type, Val, Ts))) :-
+    trusted(From),
+    retractall(reading(From, Type, _V, _T)),
+    assert(reading(From, Type, Val, Ts)).
+
+% Threshold alerting
+react(new_reading(From, Type, Val, _Ts)) :-
+    threshold(Type, above, Limit, Alert),
+    Val > Limit,
+    send(alerts, Alert).
 ```
 
-`react` fires when a signal matches.  It can update state
-(`retractall` + `assert`), check authorization (`trusted`),
-and produce outgoing messages (`send`).  Multiple `react`
-clauses handle different signal types — Prolog's
-pattern matching dispatches automatically.
+Multiple react rules for the same pattern all fire.  Different
+concerns (persist, trace, process, alert) are separate rules,
+separately maintainable, separately freezable.
 
-### Send — captured outgoing messages
+### Cascading
 
-`send(Target, Message)` doesn't transmit anything.  It
-appends `{target, message}` to an internal list.
-`queryWithSends` collects them:
+Mutations inside react rules trigger further reactions:
+
+```
+ephemeral(signal(sensor1, reading(sensor1, temp, 35, ts)))
+  → react(signal(...)) fires
+    → retractall(reading(sensor1, temp, _V, _T))
+      → react(retract(reading(...))) fires → persist, trace
+    → assert(reading(sensor1, temp, 35, ts))
+      → react(assert(reading(...))) fires → persist, trace
+    → ephemeral(new_reading(sensor1, temp, 35, ts))
+      → react(new_reading(...)) fires → threshold check → send
+  → all sends collected
+  → signal was never in the database
+```
+
+Cascading is intentional.  Each react rule is simple.  The
+chain of reactions composes complex behavior from small pieces.
+Depth limits prevent runaway.
+
+## Three primitives
+
+### ephemeral(Event)
+
+A transient event.  Never enters the clause database.  Cannot
+be queried.  Cannot be retracted.  Triggers `react(Event)`,
+then vanishes.
+
+```prolog
+ephemeral(signal(sensor1, reading(sensor1, temp, 35, ts))).
+```
+
+Ephemeral is hardened: the react chain completes or rolls
+back atomically.  This enables:
+
+- **Fossilized engines**: ephemeral doesn't mutate, so frozen
+  engines can still receive and process signals.
+- **ACID-like behavior**: the event and its reactions are
+  an atomic unit.
+
+### send(Target, Message)
+
+Captures an outgoing message.  Doesn't transmit — appends to
+an internal list.  The application collects sends after the
+query completes and decides what to do (push to WebSocket,
+write to queue, log, etc.).
+
+```prolog
+react(new_reading(_From, Type, Val, _Ts)) :-
+    threshold(Type, above, Limit, Alert),
+    Val > Limit,
+    send(alerts, Alert).
+```
+
+Prolog rules never touch I/O directly.  `send` is the
+boundary between logic and the outside world.
+
+### native(Name, Args...)
+
+Calls an external tool registered by the host language.
+The engine doesn't know what the tool does — it's a black
+box.
+
+```prolog
+react(assert(F))  :- native(db_insert, F).
+react(retract(F)) :- native(db_remove, F).
+```
+
+The host registers tools:
 
 ```javascript
-var result = engine.queryWithSends(
-    compound("handle_signal", [atom("sensor1"), reading])
-);
-// result.sends = [{target: "dashboard", fact: reading(...)}]
-// No side effects.  Signal already gone.  Sends collected.
+// JavaScript
+engine.native("db_insert", function(fact) { adapter.insert(fact); });
+engine.native("db_remove", function(fact) { adapter.remove(fact); });
+engine.native("sha256", function(data) { return crypto.hash("sha256", data); });
 ```
 
-The application decides what to do with the sends — push to
-WebSocket, write to a queue, log.  The Prolog rules never
-touch I/O directly.
-
-### The ephemeral/react/send pattern
-
-```
-signal arrives
-  → ephemeral(signal(...))     assert temporarily
-  → react                      pattern match + decide
-    → retractall/assert         update persistent state
-    → send(target, message)     capture outgoing messages
-  → signal retracts             automatic cleanup
-  → sends returned              application handles I/O
+```python
+# Python
+engine.native("db_insert", lambda fact: adapter.insert(fact))
+engine.native("sha256", lambda data: hashlib.sha256(data).digest())
 ```
 
-This is zero-cost message passing through the rule engine.
-No database writes for the signal itself.  Persistent state
-updates (`retractall`/`assert`) are the only mutations.
+```c
+// C
+y8_native(engine, "db_insert", my_insert_handler);
+y8_native(engine, "sha256", my_sha256_handler);
+```
+
+Native tools are how y8-prolog connects to the world:
+persistence, crypto, HTTP, file I/O, GPIO, anything.  The
+engine is pure logic; the host provides the tools.
+
+## Facts, rules, events
+
+Three categories in the clause database:
+
+| Category | Created by | In database? | Queryable? | Triggers react? |
+|----------|-----------|-------------|-----------|-----------------|
+| **Persistent fact** | `assert` | yes | yes | `react(assert(F))` |
+| **Rule** | `loadString` | yes | via inference | no |
+| **Ephemeral event** | `ephemeral` | no | no | `react(Event)` |
+
+`retract` removes persistent facts and triggers
+`react(retract(F))`.  Rules are loaded once and optionally
+frozen via `mineralize`/`fossilize`.
 
 ## Freezing: fossilize and mineralize
 
 ### fossilize — global freeze
 
-```javascript
-fossilize(engine);
+```prolog
+fossilize.
 ```
 
 All clauses become immutable.  `assert`, `retract`, `addClause`
-fail.  Only `ephemeral` survives.  The engine becomes a pure
-function: signals in, decisions out.
+fail.  Ephemeral still works — it doesn't mutate the database.
+The engine becomes a pure function: events in, sends out.
 
 **Use case:** parallel workers.  A thousand instances run the
 same frozen rules against different signals with zero
-coordination.  Fork the engine, not the database.
+coordination.
 
 ### mineralize — selective freeze
 
 ```prolog
-mineralize(react/0).
+mineralize(react/1).
+mineralize(trusted/1).
 mineralize(threshold/4).
-mineralize(trusted_feed/1).
 ```
 
 Specific predicates become immutable.  Everything else stays
-dynamic.  Mineralization is one-way — you can't un-mineralize.
+dynamic.  One-way — you can't un-mineralize.
 
 **Use case:** long-running systems.  Lock the rules and access
-control.  Let data (`price/3`, `reading/4`) flow freely.
-
-```prolog
-% This succeeds (price is not mineralized):
-assert(price(btc, 67432.50M)).
-
-% This fails (react is mineralized):
-assert(react :- true).
-```
+control.  Let data flow freely.
 
 ### Security model
 
 ```
-┌─────────────────────────────────────────┐
-│  Fossilized: everything frozen          │
-│  ┌──────────────────────────────────┐   │
-│  │  Mineralized: selected frozen    │   │
-│  │  ┌───────────────────────────┐   │   │
-│  │  │  Dynamic: normal Prolog   │   │   │
-│  │  │  assert/retract work      │   │   │
-│  │  └───────────────────────────┘   │   │
-│  └──────────────────────────────────┘   │
-│  Ephemeral: always works (scoped)       │
-└─────────────────────────────────────────┘
+┌──────────────────────────────────────────┐
+│  Fossilized: everything frozen           │
+│  ┌───────────────────────────────────┐   │
+│  │  Mineralized: selected frozen     │   │
+│  │  ┌────────────────────────────┐   │   │
+│  │  │  Dynamic: assert/retract   │   │   │
+│  │  └────────────────────────────┘   │   │
+│  └───────────────────────────────────┘   │
+│  Ephemeral: always works (no mutation)   │
+└──────────────────────────────────────────┘
 ```
 
-Fossilize is the outer boundary.  Mineralize carves out
-immutable zones within.  Ephemeral passes through all
-boundaries — it's scoped to the query, not the database.
+## Wiring
 
-## Reactive layer
+Nothing is built in except inference, ephemeral, react, send,
+and native.  Everything else is wiring:
 
-Built on a signal/memo/effect runtime (~80 lines):
+```prolog
+% Persistence — two react rules + native hooks
+react(assert(F))  :- native(db_insert, F).
+react(retract(F)) :- native(db_remove, F).
 
-```javascript
-var reactive = createReactiveEngine(engine);
+% Tracing — react rules
+react(assert(F))  :- native(log, assert, F).
+react(retract(F)) :- native(log, retract, F).
 
-// Signal: mutable value that tracks dependencies
-var count = createSignal(0);
+% Metrics — react + send
+react(assert(F))  :- send(metrics, asserted(F)).
 
-// Memo: derived value, recomputes when dependencies change
-var doubled = createMemo(function() { return count() * 2; });
+% Signal processing — react + ephemeral chaining
+react(signal(From, Reading)) :-
+    trusted(From),
+    retractall(reading(From, _V, _T)),
+    assert(reading(From, Reading)),
+    ephemeral(new_reading(From, Reading)).
 
-// Query: Prolog query that recomputes when facts change
-var cold = createQuery(engine, "cold(Room).");
-
-// Bump: notify the reactive system that facts changed
-reactive.bump();
-// → cold rooms recompute automatically
+% Threshold alerting — react + send
+react(new_reading(_From, reading(_Src, Type, Val, _Ts))) :-
+    threshold(Type, above, Limit, Alert),
+    Val > Limit,
+    send(alerts, Alert).
 ```
 
-`createQuery` bridges Prolog and reactive: the query result
-is a reactive value that updates when the engine's facts
-change.
-
-## Term representation
-
-| Language | Atom | Compound | Number | Variable |
-|----------|------|----------|--------|----------|
-| JS | `{type:"atom", name}` | `{type:"compound", functor, args}` | `{type:"num", value, repr?}` | `{type:"var", name}` |
-| Python | `("atom", name)` | `("compound", functor, (args,))` | `("num", value)` or `("num", value, repr)` | `("var", name)` |
-| C | 32-bit tagged value (tag bits 31:30, payload 29:0) | | | |
-
-The optional `repr` field on num terms preserves QJSON notation
-(`"67432.50M"`, `"42N"`) through the full round-trip.
+Different concerns, different rules.  Add persistence by adding
+two rules.  Add tracing by adding two rules.  Remove them by
+removing the rules.  No framework, no plugin API, no callbacks
+to register.
 
 ## CPS execution model
 
@@ -191,117 +251,113 @@ The optional `repr` field on num terms preserves QJSON notation
 solve(goals, subst, counter, depth, onSolution)
 ```
 
-Continuation-passing style.  No generators.  No stack frames
-to manage.  Backtracking is just calling the next continuation.
+Continuation-passing style.  No generators.  Backtracking is
+calling the next continuation.
 
-- `goals` — list of goals remaining to prove
-- `subst` — substitution map (variable bindings)
+- `goals` — remaining goals to prove
+- `subst` — variable bindings (substitution map)
 - `counter` — fresh variable counter
 - `depth` — recursion depth (for limits)
-- `onSolution` — callback when a solution is found
+- `onSolution` — callback on success
 
-`queryFirst` uses exception-based early exit.
-`query` collects all solutions up to a limit.
-`queryWithSends` collects solutions + outgoing messages.
+## Term representation
+
+| Language | Atom | Compound | Number | Variable |
+|----------|------|----------|--------|----------|
+| JS | `{type:"atom", name}` | `{type:"compound", functor, args}` | `{type:"num", value, repr?}` | `{type:"var", name}` |
+| Python | `("atom", name)` | `("compound", functor, (args,))` | `("num", value)` or `("num", value, repr)` | `("var", name)` |
+| C | 32-bit tagged (tag 31:30, payload 29:0) | | | |
+
+The optional `repr` field preserves QJSON notation
+(`"67432.50M"`, `"42N"`) through the full round-trip.
 
 ## Builtins
 
 | Builtin | Purpose |
 |---------|---------|
-| `assert/1` | Add a fact to the database |
-| `retract/1` | Remove first matching fact |
-| `retractall/1` | Remove all matching facts |
-| `ephemeral/1` | Scoped assert (retract after query) |
+| `assert/1` | Add fact, trigger `react(assert(F))` |
+| `retract/1` | Remove first match, trigger `react(retract(F))` |
+| `retractall/1` | Remove all matches, trigger `react(retract(F))` each |
+| `ephemeral/1` | Transient event, trigger `react(Event)` |
 | `send/2` | Capture outgoing message |
-| `findall/3` | Collect all solutions into a list |
+| `native/N` | Call external tool |
+| `mineralize/1` | Freeze a predicate |
+| `fossilize/0` | Freeze everything |
+| `findall/3` | Collect all solutions |
 | `not/1` | Negation as failure |
 | `is/2` | Arithmetic evaluation |
 | `>/2`, `</2`, `>=/2`, `=</2` | Arithmetic comparison |
 | `==/2`, `\==/2` | Term equality/inequality |
 | `=/2` | Unification |
-| `call/1` | Call a term as a goal |
-| `write/1` | Append to output buffer |
+| `call/1` | Meta-call |
 | `member/2` | List membership |
 | `append/3` | List append |
 | `length/2` | List length |
-| `mineralize/1` | Freeze a predicate (from Prolog) |
-| `path_segments/2` | URL path → atom list |
-| `field/3` | JSON object field extraction |
-
-## Persistence
-
-```javascript
-persist(engine, adapter);
-```
-
-Six-method adapter interface:
-
-```
-setup()                      — CREATE TABLE IF NOT EXISTS
-insert(key, functor, arity)  — mirror assert to storage
-remove(key)                  — mirror retract to storage
-all(predicates?)             — restore facts on startup
-commit()                     — flush to disk
-close()                      — release resources
-```
-
-Adapters: SQLite (`persist-sqlite`), SQLCipher (`persist-sqlcipher`),
-PostgreSQL (`persist-pg`), WASM SQLite (`persist-wasm`).
-
-QSQL adapter adds interval-projected typed columns for query
-pushdown.  See `docs/qsql.md`.
-
-Ephemeral facts bypass persistence — they live in memory only.
-Only `assert`/`retract` touch the database.
 
 ## Implementations
 
-| Language | Engine | Reactive | Persist | Lines |
-|----------|--------|----------|---------|-------|
-| JavaScript | `prolog-engine.js` | `reactive-prolog.js` | `persist.js` | ~300 + 80 + 100 |
-| Python | `prolog.py` | `reactive_prolog.py` | `persist.py` | ~300 + 80 + 100 |
-| C (embed) | `y8.c` (QuickJS + SQLite) | via JS | via JS | ~400 |
+| Language | Engine | Lines |
+|----------|--------|-------|
+| JavaScript | `prolog-engine.js` | ~300 |
+| Python | `prolog.py` | ~300 |
+| C (embed) | `y8.c` (QuickJS + SQLite) | ~400 |
 
-The C embed runs the JS engine inside QuickJS.  Same rules,
-same behavior, single binary.
+The engine is the same ~300 lines everywhere.  Native tools
+differ per host.  Persistence is react rules, not a built-in
+layer.
 
-## Example: IoT signal processing
+## Example: complete IoT system
 
 ```prolog
-% Rules (loaded once, then mineralized)
+% ── Native tools (registered by host) ──────────────
+% native(db_insert, F)    — SQLite persist
+% native(db_remove, F)    — SQLite persist
+% native(log, Op, F)      — structured logging
+% native(sha256, Data, H) — crypto
+
+% ── Persistence (two rules) ────────────────────────
+react(assert(F))  :- native(db_insert, F).
+react(retract(F)) :- native(db_remove, F).
+
+% ── Access control ─────────────────────────────────
 trusted(sensor1).
 trusted(sensor2).
+
+% ── Thresholds ─────────────────────────────────────
 threshold(temperature, above, 30, overheat_alert).
+threshold(humidity, above, 80, moisture_alert).
 
-react :- signal(From, reading(From, Type, Val, Ts)),
-         trusted(From),
-         retractall(reading(From, Type, _V, _T)),
-         assert(reading(From, Type, Val, Ts)).
+% ── Signal processing ──────────────────────────────
+react(signal(From, reading(From, Type, Val, Ts))) :-
+    trusted(From),
+    retractall(reading(From, Type, _V, _T)),
+    assert(reading(From, Type, Val, Ts)),
+    ephemeral(new_reading(From, Type, Val, Ts)).
 
-react :- signal(_From, reading(_Src, Type, Val, _Ts)),
-         threshold(Type, above, Limit, Alert),
-         Val > Limit,
-         send(alerts, Alert).
+react(signal(From, _Reading)) :-
+    \== trusted(From),
+    send(security, untrusted_signal(From)).
 
-% Freeze the rules
-mineralize(react/0).
+% ── Threshold alerting ─────────────────────────────
+react(new_reading(_From, Type, Val, _Ts)) :-
+    threshold(Type, above, Limit, Alert),
+    Val > Limit,
+    send(alerts, Alert).
+
+% ── Freeze rules, let data flow ────────────────────
+mineralize(react/1).
 mineralize(trusted/1).
 mineralize(threshold/4).
-
-% Signals arrive at runtime (ephemeral)
-handle_signal(From, Fact) :-
-    ephemeral(signal(From, Fact)),
-    react.
 ```
 
 ```javascript
-// Application loop
-var result = engine.queryWithSends(
-    compound("handle_signal", [atom("sensor1"),
+// Application: receive signal, collect sends
+var sends = engine.ephemeral(
+    compound("signal", [atom("sensor1"),
         compound("reading", [atom("sensor1"),
             atom("temperature"), num(35), num(1710000000)])])
 );
-// result.sends = [{target: "alerts", fact: overheat_alert}]
-// reading(sensor1, temperature, 35, 1710000000) is now in the DB.
-// The signal is gone.
+// sends = [{target: "alerts", fact: overheat_alert}]
+// reading persisted via react(assert(...)) → native(db_insert, ...)
+// signal was never in the database
 ```
