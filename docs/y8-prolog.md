@@ -227,17 +227,17 @@ react(retract(F)) :- native(log, retract, F).
 react(assert(F))  :- send(metrics, asserted(F)).
 
 % Signal processing — react + ephemeral chaining
-react(signal(From, Reading)) :-
+react({type: signal, from: From, reading: Reading}) :-
     trusted(From),
     retractall(reading(From, _V, _T)),
     assert(reading(From, Reading)),
-    ephemeral(new_reading(From, Reading)).
+    ephemeral({type: new_reading, from: From, reading: Reading}).
 
 % Threshold alerting — react + send
-react(new_reading(_From, reading(_Src, Type, Val, _Ts))) :-
+react({type: new_reading, reading: {type: Type, value: Val}}) :-
     threshold(Type, above, Limit, Alert),
     Val > Limit,
-    send(alerts, Alert).
+    send(alerts, {alert: Alert, type: Type, value: Val}).
 ```
 
 Different concerns, different rules.  Add persistence by adding
@@ -367,7 +367,6 @@ layer.
 % native(db_insert, F)    — SQLite persist
 % native(db_remove, F)    — SQLite persist
 % native(log, Op, F)      — structured logging
-% native(sha256, Data, H) — crypto
 
 % ── Persistence (two rules) ────────────────────────
 react(assert(F))  :- native(db_insert, F).
@@ -381,22 +380,22 @@ trusted(sensor2).
 threshold(temperature, above, 30, overheat_alert).
 threshold(humidity, above, 80, moisture_alert).
 
-% ── Signal processing ──────────────────────────────
-react(signal(From, reading(From, Type, Val, Ts))) :-
+% ── Signal processing (QJSON objects as terms) ─────
+react({type: signal, from: From, reading: {type: Type, value: Val, ts: Ts}}) :-
     trusted(From),
     retractall(reading(From, Type, _V, _T)),
     assert(reading(From, Type, Val, Ts)),
-    ephemeral(new_reading(From, Type, Val, Ts)).
+    ephemeral({type: new_reading, from: From, reading_type: Type, value: Val}).
 
-react(signal(From, _Reading)) :-
-    \== trusted(From),
-    send(security, untrusted_signal(From)).
+react({type: signal, from: From}) :-
+    \+ trusted(From),
+    send(security, {event: untrusted_signal, from: From}).
 
 % ── Threshold alerting ─────────────────────────────
-react(new_reading(_From, Type, Val, _Ts)) :-
+react({type: new_reading, reading_type: Type, value: Val}) :-
     threshold(Type, above, Limit, Alert),
     Val > Limit,
-    send(alerts, Alert).
+    send(alerts, {alert: Alert, type: Type, value: Val}).
 
 % ── Freeze rules, let data flow ────────────────────
 mineralize(react/1).
@@ -407,11 +406,9 @@ mineralize(threshold/4).
 ```javascript
 // Application: receive signal, collect sends
 var sends = engine.ephemeral(
-    compound("signal", [atom("sensor1"),
-        compound("reading", [atom("sensor1"),
-            atom("temperature"), num(35), num(1710000000)])])
+    parseTerm("{type: signal, from: sensor1, reading: {type: temperature, value: 35, ts: 1710000000}}")
 );
-// sends = [{target: "alerts", fact: overheat_alert}]
+// sends = [{target: "alerts", fact: {alert: overheat_alert, ...}}]
 // reading persisted via react(assert(...)) → native(db_insert, ...)
 // signal was never in the database
 ```
