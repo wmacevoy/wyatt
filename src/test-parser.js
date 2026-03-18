@@ -1076,6 +1076,155 @@ describe("QJSON objects as terms", function() {
   });
 });
 
+describe("Reactive model: ephemeral/react/native", function() {
+  it("react(assert(F)) fires on assert", function() {
+    var engine = new PrologEngine();
+    var prog = parseProgram(
+      "react(assert(F)) :- send(log, F).\n"
+    );
+    for (var i = 0; i < prog.length; i++) engine.addClause(prog[i].head, prog[i].body);
+    engine._sends = [];
+    engine.queryFirst(PrologEngine.compound("assert", [
+      PrologEngine.compound("temperature", [PrologEngine.atom("kitchen"), PrologEngine.num(22)])
+    ]));
+    assert.ok(engine._sends.length > 0, "react should have fired send");
+    assert.equal(engine._sends[0].fact.functor, "temperature");
+  });
+
+  it("react(retract(F)) fires on retract", function() {
+    var engine = new PrologEngine();
+    var prog = parseProgram(
+      "temperature(kitchen, 22).\n" +
+      "react(retract(F)) :- send(log, retracted(F)).\n"
+    );
+    for (var i = 0; i < prog.length; i++) engine.addClause(prog[i].head, prog[i].body);
+    engine._sends = [];
+    engine.queryFirst(PrologEngine.compound("retract", [
+      PrologEngine.compound("temperature", [PrologEngine.atom("kitchen"), PrologEngine.num(22)])
+    ]));
+    assert.ok(engine._sends.length > 0, "react(retract) should have fired");
+  });
+
+  it("ephemeral fires react without touching DB", function() {
+    var engine = new PrologEngine();
+    var prog = parseProgram(
+      "react({type: signal, value: V}) :- send(out, V).\n"
+    );
+    for (var i = 0; i < prog.length; i++) engine.addClause(prog[i].head, prog[i].body);
+    var clausesBefore = engine.clauses.length;
+    engine._sends = [];
+    engine.queryFirst(PrologEngine.compound("ephemeral", [
+      parseTerm("{type: signal, value: 42}")
+    ]));
+    assert.equal(engine.clauses.length, clausesBefore, "no clauses added");
+    assert.ok(engine._sends.length > 0, "react should have fired");
+    assert.equal(engine._sends[0].fact.value, 42);
+  });
+
+  it("ephemeral with QJSON object pattern matching", function() {
+    var engine = new PrologEngine();
+    var prog = parseProgram(
+      "trusted(sensor1).\n" +
+      "react({type: signal, from: From, value: Val}) :-\n" +
+      "    trusted(From), send(dashboard, Val).\n"
+    );
+    for (var i = 0; i < prog.length; i++) engine.addClause(prog[i].head, prog[i].body);
+    engine._sends = [];
+    engine.queryFirst(PrologEngine.compound("ephemeral", [
+      parseTerm("{type: signal, from: sensor1, value: 35}")
+    ]));
+    assert.ok(engine._sends.length > 0, "trusted signal should produce send");
+    assert.equal(engine._sends[0].fact.value, 35);
+  });
+
+  it("ephemeral from untrusted source produces no sends", function() {
+    var engine = new PrologEngine();
+    var prog = parseProgram(
+      "trusted(sensor1).\n" +
+      "react({type: signal, from: From, value: Val}) :-\n" +
+      "    trusted(From), send(dashboard, Val).\n"
+    );
+    for (var i = 0; i < prog.length; i++) engine.addClause(prog[i].head, prog[i].body);
+    engine._sends = [];
+    engine.queryFirst(PrologEngine.compound("ephemeral", [
+      parseTerm("{type: signal, from: hacker, value: 99}")
+    ]));
+    assert.equal(engine._sends.length, 0, "untrusted should produce no sends");
+  });
+
+  it("react chains via ephemeral", function() {
+    var engine = new PrologEngine();
+    var prog = parseProgram(
+      "react({type: signal, value: V}) :-\n" +
+      "    ephemeral({type: processed, result: V}).\n" +
+      "react({type: processed, result: R}) :-\n" +
+      "    send(out, R).\n"
+    );
+    for (var i = 0; i < prog.length; i++) engine.addClause(prog[i].head, prog[i].body);
+    engine._sends = [];
+    engine.queryFirst(PrologEngine.compound("ephemeral", [
+      parseTerm("{type: signal, value: 42}")
+    ]));
+    assert.ok(engine._sends.length > 0, "chained react should produce send");
+    assert.equal(engine._sends[0].fact.value, 42);
+  });
+
+  it("assert inside react triggers react(assert(F))", function() {
+    var engine = new PrologEngine();
+    var prog = parseProgram(
+      "react({type: signal, value: V}) :-\n" +
+      "    assert(reading(V)).\n" +
+      "react(assert(reading(V))) :-\n" +
+      "    send(persisted, V).\n"
+    );
+    for (var i = 0; i < prog.length; i++) engine.addClause(prog[i].head, prog[i].body);
+    engine._sends = [];
+    engine.queryFirst(PrologEngine.compound("ephemeral", [
+      parseTerm("{type: signal, value: 42}")
+    ]));
+    // reading(42) should be in the DB
+    var results = engine.query(PrologEngine.compound("reading", [PrologEngine.variable("V")]));
+    assert.equal(results.length, 1, "reading should be asserted");
+    // react(assert(reading(42))) should have fired
+    assert.ok(engine._sends.length > 0, "react(assert) should fire");
+    assert.equal(engine._sends[0].fact.value, 42);
+  });
+
+  it("native/2 calls registered function", function() {
+    var engine = new PrologEngine();
+    engine.registerNative("double", function(args) {
+      return PrologEngine.num(args[0].value * 2);
+    });
+    var prog = parseProgram(
+      "test(X, Y) :- native(double(X), Y).\n"
+    );
+    for (var i = 0; i < prog.length; i++) engine.addClause(prog[i].head, prog[i].body);
+    var result = engine.queryFirst(
+      PrologEngine.compound("test", [PrologEngine.num(21), PrologEngine.variable("Y")])
+    );
+    assert.ok(result !== null);
+    assert.equal(result.args[1].value, 42);
+  });
+
+  it("native/2 in react rule", function() {
+    var log = [];
+    var engine = new PrologEngine();
+    engine.registerNative("log_insert", function(args) {
+      log.push(args[0]);
+      return "ok";
+    });
+    var prog = parseProgram(
+      "react(assert(F)) :- native(log_insert(F), _Ok).\n"
+    );
+    for (var i = 0; i < prog.length; i++) engine.addClause(prog[i].head, prog[i].body);
+    engine.queryFirst(PrologEngine.compound("assert", [
+      PrologEngine.compound("temperature", [PrologEngine.atom("kitchen"), PrologEngine.num(22)])
+    ]));
+    assert.equal(log.length, 1, "native should have been called");
+    assert.equal(log[0].functor, "temperature");
+  });
+});
+
 describe("QJSON round-trip via termToString", function() {
   it("BigInt round-trips", function() {
     var t = parseTerm("42N");

@@ -20,8 +20,9 @@ function PrologEngine() {
   this.builtins = {};
   this._output = [];
   this._sends = [];
-  this.onAssert = [];    // callbacks: fn(head) after a fact is added
-  this.onRetract = [];   // callbacks: fn(head) after a fact is removed
+  this._natives = {};    // host-registered functions: name → fn(args) → result
+  this.onAssert = [];    // callbacks: fn(head) after a fact is added (external wiring)
+  this.onRetract = [];   // callbacks: fn(head) after a fact is removed (external wiring)
   this._registerBuiltins();
 }
 
@@ -108,6 +109,24 @@ PrologEngine.prototype.unify = function(a, b, subst) {
   return null;
 };
 
+// ── Native tool registration ─────────────────────────────────────
+
+PrologEngine.prototype.registerNative = function(name, fn) {
+  this._natives[name] = fn;
+};
+
+// ── React dispatch ───────────────────────────────────────────────
+// Fire all react(Event) clauses.  This is the observer pattern:
+// changes propagate forward through react rules.
+
+PrologEngine.prototype._fireReact = function(event) {
+  var reactGoal = PrologEngine.compound("react", [event]);
+  var counter = { n: 8000 };
+  var self = this;
+  // Find and solve ALL react clauses (not just first)
+  this.solve([reactGoal], new Map(), counter, 0, function() {});
+};
+
 // ── Clause management ─────────────────────────────────────────
 
 PrologEngine.prototype.addClause = function(head, body) {
@@ -124,6 +143,7 @@ PrologEngine.prototype.retractFirst = function(head) {
       var removed = this.clauses.splice(i, 1)[0];
       if (removed.body.length === 0) {
         for (var j = 0; j < this.onRetract.length; j++) this.onRetract[j](removed.head);
+        this._fireReact(PrologEngine.compound("retract", [removed.head]));
       }
       return true;
     }
@@ -387,6 +407,7 @@ PrologEngine.prototype._registerBuiltins = function() {
     var term = self.deepWalk(goal.args[0], subst);
     self.clauses.push({ head: term, body: [] });
     for (var i = 0; i < self.onAssert.length; i++) self.onAssert[i](term);
+    self._fireReact(PrologEngine.compound("assert", [term]));
     self.solve(rest, subst, counter, depth + 1, onSolution);
   };
   this.builtins["assertz/1"] = this.builtins["assert/1"];
@@ -413,6 +434,40 @@ PrologEngine.prototype._registerBuiltins = function() {
     });
     counter.n = savedN;
     var s = self.unify(bag, PrologEngine.list(results), subst);
+    if (s !== null) self.solve(rest, s, counter, depth + 1, onSolution);
+  };
+
+  this.builtins["ephemeral/1"] = function(goal, rest, subst, counter, depth, onSolution) {
+    var event = self.deepWalk(goal.args[0], subst);
+    self._fireReact(event);
+    self.solve(rest, subst, counter, depth + 1, onSolution);
+  };
+
+  this.builtins["native/2"] = function(goal, rest, subst, counter, depth, onSolution) {
+    var call = self.deepWalk(goal.args[0], subst);
+    var resultVar = goal.args[1];
+    // call is a compound: functor = function name, args = inputs
+    var name = null;
+    var args = [];
+    if (call.type === "compound") {
+      name = call.functor;
+      args = call.args;
+    } else if (call.type === "atom") {
+      name = call.name;
+    }
+    if (!name || !self._natives[name]) return; // fail silently
+    var result = self._natives[name](args);
+    if (result === undefined || result === null) {
+      result = PrologEngine.atom("ok");
+    } else if (typeof result === "number") {
+      result = PrologEngine.num(result);
+    } else if (typeof result === "string") {
+      result = PrologEngine.atom(result);
+    } else if (typeof result === "boolean") {
+      result = PrologEngine.atom(result ? "true" : "false");
+    }
+    // result is already a term if it's an object with .type
+    var s = self.unify(resultVar, result, subst);
     if (s !== null) self.solve(rest, s, counter, depth + 1, onSolution);
   };
 
