@@ -109,13 +109,13 @@ def _arg_val(arg):
 
 
 def _arg_interval(arg):
-    """Interval [val, lo, hi] for a serialized arg.
+    """Interval [str, lo, hi] for a serialized arg.
 
-    atom:       (name,    None,          None         )
-    plain num:  (str(v),  v,             v            )  point interval
-    exact BigN: (raw,     v,             v            )  point interval
-    inexact BN: (raw,     round_down(v), round_up(v)  )  1-ULP bracket
+    atom:       (name,  None,          None         )
+    exact num:  (None,  v,             v            )  str NULL (lo IS the value)
+    inexact BN: (raw,   round_down(v), round_up(v)  )  1-ULP bracket
 
+    str is None when lo == hi — the double IS the exact value.
     round_down = largest IEEE double <= exact value
     round_up   = smallest IEEE double >= exact value
     """
@@ -133,15 +133,15 @@ def _arg_interval(arg):
             v = float(raw_s)
         r = arg.get("r")
         if not r:
-            # Plain number — exact
+            # Plain number — exact, str NULL
             fv = float(v) if isinstance(v, int) else v
-            return (str(v), fv, fv)
+            return (None, fv, fv)
         # BigNum with repr — determine tightest interval
         raw = re.sub(r'[NMLnml]$', '', r)
         fv = float(v) if isinstance(v, int) else v
         d = _rounding_dir(fv, raw)
         if d == 0:
-            return (raw, fv, fv)              # exact double
+            return (None, fv, fv)             # exact double, str NULL
         elif d == 1:
             return (raw, _next_down(fv), fv)  # v > exact
         else:

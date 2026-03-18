@@ -121,36 +121,36 @@ def test_interval_atom():
 def test_interval_plain_num():
     iv = _arg_interval({"t": "n", "v": 42})
     assert len(iv) == 3, "3 elements"
-    assert iv[0] == "42", "val is string"
+    assert iv[0] is None, "str is None (exact double)"
     assert iv[1] == 42.0 and iv[2] == 42.0, "point interval"
 
 def test_interval_exact_bigdecimal():
     # 67432.50 is exactly representable → point interval
     iv = _arg_interval({"t": "n", "v": 67432.5, "r": "67432.50M"})
-    assert iv[0] == "67432.50", "val = raw digits"
+    assert iv[0] is None, "str is None (exact double)"
     assert iv[1] == 67432.5, "lo = exact"
     assert iv[2] == 67432.5, "hi = exact"
 
 def test_interval_exact_bigint():
     # 42 is exactly representable → point interval
     iv = _arg_interval({"t": "n", "v": 42, "r": "42N"})
-    assert iv[0] == "42", "val = raw digits"
+    assert iv[0] is None, "str is None (exact double)"
     assert iv[1] == 42.0, "lo = exact"
     assert iv[2] == 42.0, "hi = exact"
 
 def test_interval_inexact():
-    # 0.1 is NOT exact — double rounds UP → lo = nextDown, hi = double
+    # 0.1 is NOT exact — double rounds UP
     iv = _arg_interval({"t": "n", "v": 0.1, "r": "0.1M"})
-    assert iv[0] == "0.1", "val = raw digits"
-    assert iv[1] < 0.1, "lo < double (nextDown)"
+    assert iv[0] == "0.1", "str populated (non-exact)"
+    assert iv[1] < 0.1, "lo < double"
     assert iv[2] == 0.1, "hi = double (since v > exact)"
 
 def test_interval_brackets():
     # 0.3 rounds DOWN — double < exact 0.3
     iv = _arg_interval({"t": "n", "v": 0.3, "r": "0.3M"})
-    assert iv[0] == "0.3", "val = raw digits"
+    assert iv[0] == "0.3", "str populated (non-exact)"
     assert iv[1] == 0.3, "lo = double (since v < exact)"
-    assert iv[2] > 0.3, "hi > double (nextUp)"
+    assert iv[2] > 0.3, "hi > double"
 
 # ── Integration tests: through persist ────────────────────────
 
@@ -274,7 +274,7 @@ def test_typed_columns():
         conn = sqlite3.connect(path)
         row = conn.execute('SELECT arg0, arg1, arg1_lo, arg1_hi FROM "q$price$2"').fetchone()
         assert row[0] == "aapl"
-        assert row[1] == "187", "val is string"
+        assert row[1] is None, "str is None (exact double)"
         assert row[2] == 187.0, "lo == val for plain num"
         assert row[3] == 187.0, "hi == val for plain num"
         conn.close()
@@ -290,7 +290,7 @@ def test_exact_bigdecimal_interval():
         e.add_clause(compound("price", [atom("btc"), num(67432.5, "67432.50M")]))
         conn = sqlite3.connect(path)
         row = conn.execute('SELECT arg1, arg1_lo, arg1_hi FROM "q$price$2"').fetchone()
-        assert row[0] == "67432.50", "value string"
+        assert row[0] is None, "str is None (exact double)"
         assert row[1] == 67432.5, "lo = exact (point)"
         assert row[2] == 67432.5, "hi = exact (point)"
         conn.close()
@@ -306,7 +306,7 @@ def test_inexact_bigdecimal_interval():
         e.add_clause(compound("rate", [num(0.1, "0.1M")]))
         conn = sqlite3.connect(path)
         row = conn.execute('SELECT arg0, arg0_lo, arg0_hi FROM "q$rate$1"').fetchone()
-        assert row[0] == "0.1", "value string"
+        assert row[0] == "0.1", "str populated (non-exact)"
         assert row[1] < row[2], "lo < hi (non-point)"
         conn.close()
         db["close"]()

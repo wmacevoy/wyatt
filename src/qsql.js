@@ -178,12 +178,14 @@ function _qsql_argVal(arg) {
   return JSON.stringify(arg);
 }
 
-// Interval: [val, lo, hi] for a serialized arg.
+// Interval: [str, lo, hi] for a serialized arg.
 //
-//   atom:       [name,      null,          null         ]
-//   plain num:  [String(v), v,             v            ]
-//   exact BigN: [raw,       v,             v            ]  (point interval)
-//   inexact BN: [raw,       round_down(v), round_up(v)  ]  (1-ULP bracket)
+//   atom:       [name,  null,          null         ]
+//   exact num:  [null,  v,             v            ]  str NULL (lo IS the value)
+//   inexact BN: [raw,   round_down(v), round_up(v) ]  1-ULP bracket
+//
+// str is NULL when lo == hi — the double IS the exact value.
+// str is populated only in the overlap zone (~0.001%).
 //
 // round_down = largest double ≤ exact value
 // round_up   = smallest double ≥ exact value
@@ -195,11 +197,11 @@ function _qsql_argInterval(arg) {
   if (arg.t === "n") {
     var v = arg.v;
     if (typeof v !== "number") v = Number(String(v).replace(/[NMLnml]$/, ""));
-    if (!arg.r) return [String(v), v, v]; // plain number — exact
+    if (!arg.r) return [null, v, v]; // plain number — exact, str NULL
     // BigNum with repr — determine tightest interval
     var raw = arg.r.replace(/[NMLnml]$/, "");
     var dir = _roundingDir(v, raw);
-    if (dir === 0) return [raw, v, v];             // exact double
+    if (dir === 0) return [null, v, v];            // exact double, str NULL
     if (dir === 1) return [raw, _nextDown(v), v];  // v > exact
     return [raw, v, _nextUp(v)];                   // v < exact (dir === -1)
   }

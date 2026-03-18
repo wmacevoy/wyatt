@@ -277,25 +277,25 @@ test("argInterval atom", function() {
   assert(iv[1] === null && iv[2] === null);
 });
 
-test("argInterval plain number", function() {
+test("argInterval plain number → str NULL", function() {
   var iv = _qsql_argInterval({ t: "n", v: 42 });
   assert(iv.length === 3, "3 elements");
-  assert(iv[0] === "42", "val is string");
+  assert(iv[0] === null, "str is null (exact double)");
   assert(iv[1] === 42 && iv[2] === 42, "point interval");
 });
 
-test("argInterval exact BigDecimal → point", function() {
+test("argInterval exact BigDecimal → str NULL", function() {
   // 67432.50 is exactly representable as IEEE 754 double
   var iv = _qsql_argInterval({ t: "n", v: 67432.5, r: "67432.50M" });
-  assert(iv[0] === "67432.50", "val = raw digits");
+  assert(iv[0] === null, "str is null (exact double)");
   assert(iv[1] === 67432.5, "lo = exact");
   assert(iv[2] === 67432.5, "hi = exact");
 });
 
-test("argInterval exact BigInt → point", function() {
+test("argInterval exact BigInt → str NULL", function() {
   // 42 is exactly representable
   var iv = _qsql_argInterval({ t: "n", v: 42, r: "42N" });
-  assert(iv[0] === "42", "val = raw digits");
+  assert(iv[0] === null, "str is null (exact double)");
   assert(iv[1] === 42, "lo = exact");
   assert(iv[2] === 42, "hi = exact");
 });
@@ -457,7 +457,7 @@ test("typed column storage", function() {
   assert(keys.length === 1, "expected 1 row");
   var row = table.rows[keys[0]];
   assert(row.arg0 === "aapl", "arg0 should be 'aapl', got: " + row.arg0);
-  assert(row.arg1 === "187", "arg1 should be '187' (string), got: " + row.arg1);
+  assert(row.arg1 === null || row.arg1 === undefined, "arg1 str is null (exact)");
   // Plain number: lo == hi (point interval)
   assert(row.arg1_lo === 187, "arg1_lo should be 187");
   assert(row.arg1_hi === 187, "arg1_hi should be 187");
@@ -472,7 +472,7 @@ test("exact BigDecimal → point interval stored", function() {
   var table = db._tables["q$price$2"];
   var keys = Object.keys(table.rows);
   var row = table.rows[keys[0]];
-  assert(row.arg1 === "67432.50", "arg1 = value string");
+  assert(row.arg1 === null || row.arg1 === undefined, "arg1 str is null (exact)");
   assert(row.arg1_lo === 67432.5, "arg1_lo = exact (point)");
   assert(row.arg1_hi === 67432.5, "arg1_hi = exact (point)");
 });
@@ -486,7 +486,7 @@ test("exact BigInt → point interval stored", function() {
   var table = db._tables["q$ts$1"];
   var keys = Object.keys(table.rows);
   var row = table.rows[keys[0]];
-  assert(row.arg0 === "1710000000", "value string");
+  assert(row.arg0 === null || row.arg0 === undefined, "str is null (exact)");
   assert(row.arg0_lo === 1710000000, "lo = exact (point)");
   assert(row.arg0_hi === 1710000000, "hi = exact (point)");
 });
@@ -500,7 +500,7 @@ test("inexact BigDecimal → 1-ULP interval stored", function() {
   var table = db._tables["q$rate$1"];
   var keys = Object.keys(table.rows);
   var row = table.rows[keys[0]];
-  assert(row.arg0 === "0.1", "value string");
+  assert(row.arg0 === "0.1", "str populated (non-exact)");
   assert(row.arg0_lo < row.arg0_hi, "lo < hi (non-point interval)");
   assert(row.arg0_lo <= 0.1 && row.arg0_hi >= 0.1, "interval brackets double");
 });
