@@ -402,27 +402,37 @@ describe("08 — Reactive queries", function() {
 describe("09 — Ephemeral/react signals", function() {
   function makeEngine() {
     var e = new PrologEngine();
-    var rp = createReactiveEngine(e);
     loadString(e, [
       "trusted_sensor(sensor_1).",
       "trusted_sensor(sensor_2).",
-      "handle_signal(From, Fact) :- ephemeral(signal(From, Fact)), react.",
-      "react :- signal(From, temperature(From, Room, Val)),",
-      "         trusted_sensor(From),",
-      "         retractall(temperature(Room, _)),",
-      "         assert(temperature(Room, Val)),",
-      "         send(dashboard, temperature(Room, Val))."
+      "",
+      "% React to signal events (QJSON objects as terms)",
+      "react({type: signal, from: From, reading: temperature(From, Room, Val)}) :-",
+      "    trusted_sensor(From),",
+      "    retractall(temperature(Room, _OldV)),",
+      "    assert(temperature(Room, Val)),",
+      "    send(dashboard, temperature(Room, Val))."
     ].join("\n"));
     return e;
   }
 
+  function sendSignal(e, from, reading) {
+    e._sends = [];
+    e.queryFirst(compound("ephemeral", [
+      PrologEngine.object([
+        { key: "type", value: atom("signal") },
+        { key: "from", value: atom(from) },
+        { key: "reading", value: reading }
+      ])
+    ]));
+    return e._sends.slice();
+  }
+
   it("accepts signals from trusted sensors", function() {
     var e = makeEngine();
-    var r = e.queryFirst(compound("handle_signal", [
-      atom("sensor_1"),
-      compound("temperature", [atom("sensor_1"), atom("kitchen"), num(72)])
-    ]));
-    assert.ok(r);
+    var sends = sendSignal(e, "sensor_1",
+      compound("temperature", [atom("sensor_1"), atom("kitchen"), num(72)]));
+    assert.ok(sends.length > 0, "should produce sends");
     var temp = e.queryFirst(compound("temperature", [atom("kitchen"), variable("T")]));
     assert.ok(temp);
     assert.equal(temp.args[1].value, 72);
@@ -430,44 +440,36 @@ describe("09 — Ephemeral/react signals", function() {
 
   it("drops signals from untrusted sensors", function() {
     var e = makeEngine();
-    var r = e.queryFirst(compound("handle_signal", [
-      atom("rogue"),
-      compound("temperature", [atom("rogue"), atom("kitchen"), num(999)])
-    ]));
-    assert.equal(r, null);
+    var sends = sendSignal(e, "rogue",
+      compound("temperature", [atom("rogue"), atom("kitchen"), num(999)]));
+    assert.equal(sends.length, 0, "untrusted → no sends");
     var temp = e.queryFirst(compound("temperature", [atom("kitchen"), variable("T")]));
-    assert.equal(temp, null);
+    assert.equal(temp, null, "no fact asserted");
   });
 
   it("drops spoofed signals (From mismatch)", function() {
     var e = makeEngine();
-    var r = e.queryFirst(compound("handle_signal", [
-      atom("sensor_1"),
-      compound("temperature", [atom("sensor_2"), atom("kitchen"), num(999)])
-    ]));
-    assert.equal(r, null);
+    var sends = sendSignal(e, "sensor_1",
+      compound("temperature", [atom("sensor_2"), atom("kitchen"), num(999)]));
+    assert.equal(sends.length, 0, "spoofed → no sends");
   });
 
-  it("ephemeral auto-retracts signal after query", function() {
+  it("ephemeral never touches the database", function() {
     var e = makeEngine();
-    e.queryFirst(compound("handle_signal", [
-      atom("sensor_1"),
-      compound("temperature", [atom("sensor_1"), atom("kitchen"), num(72)])
-    ]));
-    var stale = e.queryFirst(compound("signal", [variable("_"), variable("_")]));
-    assert.equal(stale, null);
+    var clausesBefore = e.clauses.length;
+    sendSignal(e, "sensor_1",
+      compound("temperature", [atom("sensor_1"), atom("kitchen"), num(72)]));
+    // Only one new clause (the asserted temperature), not the signal
+    var signalFacts = e.query(compound("signal", [variable("_A"), variable("_B")]));
+    assert.equal(signalFacts.length, 0, "no signal facts in DB");
   });
 
   it("upserts replace old values", function() {
     var e = makeEngine();
-    e.queryFirst(compound("handle_signal", [
-      atom("sensor_1"),
-      compound("temperature", [atom("sensor_1"), atom("kitchen"), num(72)])
-    ]));
-    e.queryFirst(compound("handle_signal", [
-      atom("sensor_1"),
-      compound("temperature", [atom("sensor_1"), atom("kitchen"), num(65)])
-    ]));
+    sendSignal(e, "sensor_1",
+      compound("temperature", [atom("sensor_1"), atom("kitchen"), num(72)]));
+    sendSignal(e, "sensor_1",
+      compound("temperature", [atom("sensor_1"), atom("kitchen"), num(65)]));
     var results = e.query(compound("temperature", [atom("kitchen"), variable("T")]));
     assert.equal(results.length, 1);
     assert.equal(results[0].args[1].value, 65);
@@ -475,41 +477,31 @@ describe("09 — Ephemeral/react signals", function() {
 
   it("send/2 captures outgoing messages", function() {
     var e = makeEngine();
-    var result = e.queryWithSends(compound("handle_signal", [
-      atom("sensor_1"),
-      compound("temperature", [atom("sensor_1"), atom("kitchen"), num(72)])
-    ]));
-    assert.ok(result.result);
-    assert.equal(result.sends.length, 1);
-    assert.equal(result.sends[0].target.name, "dashboard");
-    assert.equal(result.sends[0].fact.functor, "temperature");
-    assert.equal(result.sends[0].fact.args[0].name, "kitchen");
-    assert.equal(result.sends[0].fact.args[1].value, 72);
+    var sends = sendSignal(e, "sensor_1",
+      compound("temperature", [atom("sensor_1"), atom("kitchen"), num(72)]));
+    assert.equal(sends.length, 1);
+    assert.equal(sends[0].target.name, "dashboard");
+    assert.equal(sends[0].fact.functor, "temperature");
+    assert.equal(sends[0].fact.args[0].name, "kitchen");
+    assert.equal(sends[0].fact.args[1].value, 72);
   });
 
   it("send/2 produces no sends when signal is dropped", function() {
     var e = makeEngine();
-    var result = e.queryWithSends(compound("handle_signal", [
-      atom("rogue"),
-      compound("temperature", [atom("rogue"), atom("kitchen"), num(999)])
-    ]));
-    assert.equal(result.result, null);
-    assert.equal(result.sends.length, 0);
+    var sends = sendSignal(e, "rogue",
+      compound("temperature", [atom("rogue"), atom("kitchen"), num(999)]));
+    assert.equal(sends.length, 0);
   });
 
-  it("queryWithSends clears sends between calls", function() {
+  it("sends clear between calls", function() {
     var e = makeEngine();
-    var r1 = e.queryWithSends(compound("handle_signal", [
-      atom("sensor_1"),
-      compound("temperature", [atom("sensor_1"), atom("kitchen"), num(72)])
-    ]));
-    assert.equal(r1.sends.length, 1);
-    var r2 = e.queryWithSends(compound("handle_signal", [
-      atom("sensor_1"),
-      compound("temperature", [atom("sensor_1"), atom("bedroom"), num(68)])
-    ]));
-    assert.equal(r2.sends.length, 1);
-    assert.equal(r2.sends[0].fact.args[0].name, "bedroom");
+    var s1 = sendSignal(e, "sensor_1",
+      compound("temperature", [atom("sensor_1"), atom("kitchen"), num(72)]));
+    assert.equal(s1.length, 1);
+    var s2 = sendSignal(e, "sensor_1",
+      compound("temperature", [atom("sensor_1"), atom("bedroom"), num(68)]));
+    assert.equal(s2.length, 1);
+    assert.equal(s2[0].fact.args[0].name, "bedroom");
   });
 });
 
