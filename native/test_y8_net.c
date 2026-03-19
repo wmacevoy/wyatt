@@ -20,6 +20,13 @@
 #include <arpa/inet.h>
 #include "y8_net.h"
 
+#ifdef __has_include
+#if __has_include(<openssl/ssl.h>)
+#define Y8_HAS_TLS 1
+#include <openssl/ssl.h>
+#endif
+#endif
+
 static int pass = 0, fail = 0;
 
 #define TEST(name, cond) do { \
@@ -414,7 +421,7 @@ static void test_tcp_reconnect(void) {
         /* Child: client with auto-reconnect */
         close(server_fd);
         y8_tcp_conn conn;
-        y8_tcp_conn_init(&conn, "127.0.0.1", port);
+        y8_tcp_conn_init(&conn, "127.0.0.1", port, NULL);
 
         /* Send 3 messages, server will die after 2 and restart */
         const char *m1 = "before";
@@ -461,6 +468,81 @@ static void test_tcp_reconnect(void) {
     TEST("reconnect child exit ok", WIFEXITED(status) && WEXITSTATUS(status) == 0);
 }
 
+/* ── TLS transport ───────────────────────────────────── */
+
+static void test_tls(void) {
+    printf("\n=== TLS ===\n");
+
+    /* Generate self-signed cert+key via openssl CLI */
+    int rc = system(
+        "openssl req -x509 -newkey rsa:2048 -keyout /tmp/y8test.key "
+        "-out /tmp/y8test.crt -days 1 -nodes -batch -subj '/CN=localhost' "
+        ">/dev/null 2>&1");
+    if (rc != 0) {
+        printf("  skip (openssl CLI not available)\n");
+        return;
+    }
+
+    y8_tls_ctx *server_tls = y8_tls_server("/tmp/y8test.crt", "/tmp/y8test.key");
+    y8_tls_ctx *client_tls = y8_tls_client(NULL); /* no verify for self-signed */
+    TEST("tls server ctx", server_tls != NULL);
+    TEST("tls client ctx", client_tls != NULL);
+    if (!server_tls || !client_tls) return;
+
+    int server_fd = y8_tcp_listen(0);
+    struct sockaddr_in saddr;
+    socklen_t slen = sizeof(saddr);
+    getsockname(server_fd, (struct sockaddr *)&saddr, &slen);
+    int port = ntohs(saddr.sin_port);
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        /* Child: TLS client via y8_tcp_conn */
+        close(server_fd);
+        y8_tcp_conn conn;
+        y8_tcp_conn_init(&conn, "127.0.0.1", port, client_tls);
+        y8_tcp_conn_send(&conn, "hello-tls", 9);
+        char *rbuf = NULL; int rlen = 0;
+        y8_tcp_conn_recv(&conn, &rbuf, &rlen);
+        int ok = (rlen == 8 && rbuf && memcmp(rbuf, "reply-ok", 8) == 0);
+        free(rbuf);
+        y8_tcp_conn_close(&conn);
+        y8_tls_free(client_tls);
+        _exit(ok ? 0 : 1);
+    }
+
+    /* Parent: TLS server */
+    void *ssl = NULL;
+    int conn_fd = y8_tcp_accept_tls(server_fd, server_tls, &ssl);
+    TEST("tls accept", conn_fd >= 0 && ssl != NULL);
+    close(server_fd);
+
+    if (conn_fd >= 0 && ssl) {
+        char *buf = NULL; int len = 0;
+        int r = y8_frame_read_ssl(ssl, &buf, &len);
+        TEST("tls read", r == 9 && buf && memcmp(buf, "hello-tls", 9) == 0);
+        free(buf);
+
+        y8_frame_write_ssl(ssl, "reply-ok", 8);
+
+#ifdef Y8_HAS_TLS
+        SSL_shutdown((SSL *)ssl);
+        SSL_free((SSL *)ssl);
+#endif
+    } else {
+        TEST("tls read", 0);
+    }
+    close(conn_fd);
+
+    int status;
+    waitpid(pid, &status, 0);
+    TEST("tls client ok", WIFEXITED(status) && WEXITSTATUS(status) == 0);
+
+    y8_tls_free(server_tls);
+    unlink("/tmp/y8test.crt");
+    unlink("/tmp/y8test.key");
+}
+
 /* ── Main ────────────────────────────────────────────── */
 
 int main(void) {
@@ -483,6 +565,7 @@ int main(void) {
     test_udp(10);
     test_udp(1000);
     test_tcp_reconnect();
+    test_tls();
 
     printf("\n%d/%d tests passed\n", pass, pass + fail);
     return fail ? 1 : 0;

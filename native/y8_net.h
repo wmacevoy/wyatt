@@ -73,21 +73,42 @@ int y8_tcp_connect(const char *host, int port);
 
 #define Y8_RECONNECT_MAX_MS 4096
 
+/* TLS context wraps SSL_CTX from LibreSSL/OpenSSL. NULL for plaintext. */
+typedef struct y8_tls_ctx y8_tls_ctx;
+
+/* Create TLS context from cert+key files (server) or CA (client).
+   Pass NULL paths for defaults.  Returns NULL on error. */
+y8_tls_ctx *y8_tls_server(const char *cert_file, const char *key_file);
+y8_tls_ctx *y8_tls_client(const char *ca_file); /* NULL = no verify */
+
+/* Free TLS context. */
+void y8_tls_free(y8_tls_ctx *ctx);
+
 typedef struct {
-    int  fd;
-    char host[256];
-    int  port;
-    int  tries;      /* current backoff exponent */
+    int          fd;
+    char         host[256];
+    int          port;
+    int          tries;      /* current backoff exponent */
+    y8_tls_ctx  *tls;        /* NULL = plaintext */
+    void        *ssl;        /* SSL* — opaque, NULL for plaintext */
 } y8_tcp_conn;
 
-/* Init a persistent connection.  Connects immediately. */
-void y8_tcp_conn_init(y8_tcp_conn *c, const char *host, int port);
+/* Init persistent connection.  tls=NULL for plaintext. */
+void y8_tcp_conn_init(y8_tcp_conn *c, const char *host, int port,
+                      y8_tls_ctx *tls);
 
-/* Send with auto-reconnect.  Returns 0 or -1 (after max retries). */
+/* Send with auto-reconnect.  Returns 0 or -1. */
 int y8_tcp_conn_send(y8_tcp_conn *c, const char *data, int len);
 
 /* Recv with auto-reconnect.  Caller frees *data. */
 int y8_tcp_conn_recv(y8_tcp_conn *c, char **data, int *len);
+
+/* Accept with optional TLS handshake. */
+int y8_tcp_accept_tls(int server_fd, y8_tls_ctx *tls, void **ssl_out);
+
+/* Framing over SSL. */
+int y8_frame_write_ssl(void *ssl, const char *data, int len);
+int y8_frame_read_ssl(void *ssl, char **data, int *len);
 
 /* Close. */
 void y8_tcp_conn_close(y8_tcp_conn *c);

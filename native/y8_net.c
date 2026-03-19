@@ -1,7 +1,8 @@
 /* ============================================================
- * y8_net.c — QJSON wire framing + pipe transport
+ * y8_net.c — QJSON wire framing + pipe + TCP + UDP + TLS
  *
- * Zero dependencies: POSIX only (read/write/close).
+ * POSIX + optional LibreSSL/OpenSSL for TLS.
+ * Compile with -lssl -lcrypto for TLS support.
  * ============================================================ */
 
 #include <stdio.h>
@@ -13,6 +14,17 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+
+#ifdef __has_include
+#if __has_include(<openssl/ssl.h>)
+#define Y8_HAS_TLS 1
+#endif
+#endif
+
+#ifdef Y8_HAS_TLS
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#endif
 #include "y8_net.h"
 
 /* ── Helpers: full read/write with retry on EINTR ──── */
@@ -178,25 +190,52 @@ static void _y8_sleep_ms(int ms) {
     select(0, NULL, NULL, NULL, &tv);
 }
 
+static void _y8_ssl_close(y8_tcp_conn *c) {
+#ifdef Y8_HAS_TLS
+    if (c->ssl) { SSL_shutdown((SSL *)c->ssl); SSL_free((SSL *)c->ssl); c->ssl = NULL; }
+#endif
+}
+
+static int _y8_ssl_connect(y8_tcp_conn *c) {
+#ifdef Y8_HAS_TLS
+    if (c->tls && c->fd >= 0) {
+        SSL *ssl = SSL_new(((y8_tls_ctx *)c->tls)->ctx);
+        SSL_set_fd(ssl, c->fd);
+        if (SSL_connect(ssl) <= 0) {
+            ERR_print_errors_fp(stderr);
+            SSL_free(ssl); return -1;
+        }
+        c->ssl = ssl;
+    }
+#endif
+    return 0;
+}
+
 static int _y8_tcp_reconnect(y8_tcp_conn *c) {
+    _y8_ssl_close(c);
     if (c->fd >= 0) { close(c->fd); c->fd = -1; }
     while (1) {
         int delay = 1 << (c->tries < 12 ? c->tries : 12);
         if (delay > Y8_RECONNECT_MAX_MS) delay = Y8_RECONNECT_MAX_MS;
         _y8_sleep_ms(delay);
         c->fd = y8_tcp_connect(c->host, c->port);
-        if (c->fd >= 0) { c->tries = 0; return 0; }
+        if (c->fd >= 0 && _y8_ssl_connect(c) == 0) { c->tries = 0; return 0; }
+        if (c->fd >= 0) { close(c->fd); c->fd = -1; }
         if (c->tries < 12) c->tries++;
     }
 }
 
-void y8_tcp_conn_init(y8_tcp_conn *c, const char *host, int port) {
+void y8_tcp_conn_init(y8_tcp_conn *c, const char *host, int port,
+                      y8_tls_ctx *tls)
+{
     c->fd = -1;
     c->port = port;
     c->tries = 0;
+    c->tls = tls;
+    c->ssl = NULL;
     snprintf(c->host, sizeof(c->host), "%s", host);
     c->fd = y8_tcp_connect(host, port);
-    /* If initial connect fails, first send/recv will reconnect */
+    if (c->fd >= 0) _y8_ssl_connect(c);
 }
 
 static int _y8_tcp_alive(int fd) {
@@ -213,29 +252,169 @@ static int _y8_tcp_alive(int fd) {
     return 1;
 }
 
+static int _y8_conn_write(y8_tcp_conn *c, const char *data, int len) {
+#ifdef Y8_HAS_TLS
+    if (c->ssl) return y8_frame_write_ssl(c->ssl, data, len);
+#endif
+    return y8_frame_write(c->fd, data, len);
+}
+
+static int _y8_conn_read(y8_tcp_conn *c, char **data, int *len) {
+#ifdef Y8_HAS_TLS
+    if (c->ssl) return y8_frame_read_ssl(c->ssl, data, len);
+#endif
+    return y8_frame_read(c->fd, data, len);
+}
+
 int y8_tcp_conn_send(y8_tcp_conn *c, const char *data, int len) {
     if (c->fd < 0 || !_y8_tcp_alive(c->fd)) _y8_tcp_reconnect(c);
-    int r = y8_frame_write(c->fd, data, len);
+    int r = _y8_conn_write(c, data, len);
     if (r < 0) {
         _y8_tcp_reconnect(c);
-        r = y8_frame_write(c->fd, data, len);
+        r = _y8_conn_write(c, data, len);
     }
     return r;
 }
 
 int y8_tcp_conn_recv(y8_tcp_conn *c, char **data, int *len) {
     if (c->fd < 0) _y8_tcp_reconnect(c);
-    int r = y8_frame_read(c->fd, data, len);
+    int r = _y8_conn_read(c, data, len);
     if (r < 0) {
         _y8_tcp_reconnect(c);
-        r = y8_frame_read(c->fd, data, len);
+        r = _y8_conn_read(c, data, len);
     }
     return r;
 }
 
 void y8_tcp_conn_close(y8_tcp_conn *c) {
+    _y8_ssl_close(c);
     if (c->fd >= 0) { close(c->fd); c->fd = -1; }
 }
+
+/* ── TLS context + SSL framing ─────────────────────── */
+
+#ifdef Y8_HAS_TLS
+
+struct y8_tls_ctx { SSL_CTX *ctx; };
+
+static int _tls_inited = 0;
+static void _tls_init(void) {
+    if (!_tls_inited) {
+        OPENSSL_init_ssl(0, NULL);
+        _tls_inited = 1;
+    }
+}
+
+y8_tls_ctx *y8_tls_server(const char *cert_file, const char *key_file) {
+    _tls_init();
+    SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
+    if (!ctx) return NULL;
+    if (SSL_CTX_use_certificate_file(ctx, cert_file, SSL_FILETYPE_PEM) <= 0 ||
+        SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0) {
+        SSL_CTX_free(ctx); return NULL;
+    }
+    y8_tls_ctx *t = (y8_tls_ctx *)malloc(sizeof(*t));
+    t->ctx = ctx;
+    return t;
+}
+
+y8_tls_ctx *y8_tls_client(const char *ca_file) {
+    _tls_init();
+    SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
+    if (!ctx) return NULL;
+    if (ca_file) {
+        SSL_CTX_load_verify_locations(ctx, ca_file, NULL);
+        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+    } else {
+        SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
+    }
+    y8_tls_ctx *t = (y8_tls_ctx *)malloc(sizeof(*t));
+    t->ctx = ctx;
+    return t;
+}
+
+void y8_tls_free(y8_tls_ctx *t) {
+    if (t) { SSL_CTX_free(t->ctx); free(t); }
+}
+
+int y8_tcp_accept_tls(int server_fd, y8_tls_ctx *tls, void **ssl_out) {
+    int fd = y8_tcp_accept(server_fd);
+    if (fd < 0) { fprintf(stderr, "tcp accept failed: %s\n", strerror(errno)); return -1; }
+    if (tls) {
+        SSL *ssl = SSL_new(tls->ctx);
+        SSL_set_fd(ssl, fd);
+        int ar = SSL_accept(ssl);
+        if (ar <= 0) {
+            fprintf(stderr, "SSL_accept=%d err=%d\n", ar, SSL_get_error(ssl, ar));
+            ERR_print_errors_fp(stderr);
+            SSL_free(ssl); close(fd); return -1;
+        }
+        *ssl_out = ssl;
+    } else {
+        *ssl_out = NULL;
+    }
+    return fd;
+}
+
+static int ssl_write_all(SSL *ssl, const char *buf, int len) {
+    int written = 0;
+    while (written < len) {
+        int n = SSL_write(ssl, buf + written, len - written);
+        if (n <= 0) return -1;
+        written += n;
+    }
+    return 0;
+}
+
+static int ssl_read_all(SSL *ssl, char *buf, int len) {
+    int got = 0;
+    while (got < len) {
+        int n = SSL_read(ssl, buf + got, len - got);
+        if (n <= 0) return -1;
+        got += n;
+    }
+    return 0;
+}
+
+int y8_frame_write_ssl(void *ssl, const char *data, int len) {
+    if (len < 0 || len > Y8_NET_MAX_MSG) return -1;
+    char hdr[4];
+    hdr[0] = (char)((len >> 24) & 0xFF);
+    hdr[1] = (char)((len >> 16) & 0xFF);
+    hdr[2] = (char)((len >> 8)  & 0xFF);
+    hdr[3] = (char)((len)       & 0xFF);
+    if (ssl_write_all((SSL *)ssl, hdr, 4) < 0) return -1;
+    if (len > 0 && ssl_write_all((SSL *)ssl, data, len) < 0) return -1;
+    return 0;
+}
+
+int y8_frame_read_ssl(void *ssl, char **data, int *len) {
+    char hdr[4];
+    if (ssl_read_all((SSL *)ssl, hdr, 4) < 0) return -1;
+    uint32_t size = ((uint32_t)(unsigned char)hdr[0] << 24)
+                  | ((uint32_t)(unsigned char)hdr[1] << 16)
+                  | ((uint32_t)(unsigned char)hdr[2] << 8)
+                  | ((uint32_t)(unsigned char)hdr[3]);
+    if (size == 0) { *data = NULL; *len = 0; return 0; }
+    if (size > Y8_NET_MAX_MSG) return -1;
+    char *buf = (char *)malloc(size);
+    if (!buf) return -1;
+    if (ssl_read_all((SSL *)ssl, buf, (int)size) < 0) { free(buf); return -1; }
+    *data = buf;
+    *len = (int)size;
+    return (int)size;
+}
+
+#else /* no TLS */
+
+y8_tls_ctx *y8_tls_server(const char *c, const char *k) { (void)c;(void)k; return NULL; }
+y8_tls_ctx *y8_tls_client(const char *c) { (void)c; return NULL; }
+void y8_tls_free(y8_tls_ctx *t) { (void)t; }
+int y8_tcp_accept_tls(int s, y8_tls_ctx *t, void **o) { *o=NULL; (void)t; return y8_tcp_accept(s); }
+int y8_frame_write_ssl(void *s, const char *d, int l) { (void)s;(void)d;(void)l; return -1; }
+int y8_frame_read_ssl(void *s, char **d, int *l) { (void)s;(void)d;(void)l; return -1; }
+
+#endif
 
 /* ── UDP transport ─────────────────────────────────── */
 
