@@ -469,3 +469,238 @@ int y8_udp_recv(int fd, char **data, int *len) {
     *len = (int)n;
     return (int)n;
 }
+
+/* ── WebSocket transport ───────────────────────────── */
+
+/* Minimal SHA-1 for WebSocket accept key (RFC 6455) */
+static void _sha1(const unsigned char *msg, int len, unsigned char out[20]) {
+    uint32_t h0=0x67452301, h1=0xEFCDAB89, h2=0x98BADCFE, h3=0x10325476, h4=0xC3D2E1F0;
+    int ml = len * 8;
+    int padded = ((len + 9 + 63) / 64) * 64;
+    unsigned char *buf = (unsigned char *)calloc(1, padded);
+    memcpy(buf, msg, len);
+    buf[len] = 0x80;
+    buf[padded-4] = (ml >> 24) & 0xFF;
+    buf[padded-3] = (ml >> 16) & 0xFF;
+    buf[padded-2] = (ml >> 8) & 0xFF;
+    buf[padded-1] = ml & 0xFF;
+    for (int c = 0; c < padded; c += 64) {
+        uint32_t w[80];
+        for (int i = 0; i < 16; i++)
+            w[i] = ((uint32_t)buf[c+i*4]<<24)|((uint32_t)buf[c+i*4+1]<<16)|
+                    ((uint32_t)buf[c+i*4+2]<<8)|buf[c+i*4+3];
+        for (int i = 16; i < 80; i++) {
+            uint32_t t = w[i-3]^w[i-8]^w[i-14]^w[i-16];
+            w[i] = (t<<1)|(t>>31);
+        }
+        uint32_t a=h0,b=h1,c2=h2,d=h3,e=h4;
+        for (int i = 0; i < 80; i++) {
+            uint32_t f,k;
+            if (i<20) { f=(b&c2)|((~b)&d); k=0x5A827999; }
+            else if (i<40) { f=b^c2^d; k=0x6ED9EBA1; }
+            else if (i<60) { f=(b&c2)|(b&d)|(c2&d); k=0x8F1BBCDC; }
+            else { f=b^c2^d; k=0xCA62C1D6; }
+            uint32_t tmp = ((a<<5)|(a>>27))+f+e+k+w[i];
+            e=d; d=c2; c2=(b<<30)|(b>>2); b=a; a=tmp;
+        }
+        h0+=a; h1+=b; h2+=c2; h3+=d; h4+=e;
+    }
+    free(buf);
+    for (int i=0;i<4;i++) { out[i]=h0>>(24-i*8); out[4+i]=h1>>(24-i*8);
+        out[8+i]=h2>>(24-i*8); out[12+i]=h3>>(24-i*8); out[16+i]=h4>>(24-i*8); }
+}
+
+static const char _b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+static int _b64_encode(const unsigned char *in, int len, char *out) {
+    int o = 0;
+    for (int i = 0; i < len; i += 3) {
+        uint32_t v = (uint32_t)in[i] << 16;
+        if (i+1 < len) v |= (uint32_t)in[i+1] << 8;
+        if (i+2 < len) v |= in[i+2];
+        out[o++] = _b64[(v>>18)&63];
+        out[o++] = _b64[(v>>12)&63];
+        out[o++] = (i+1 < len) ? _b64[(v>>6)&63] : '=';
+        out[o++] = (i+2 < len) ? _b64[v&63] : '=';
+    }
+    out[o] = '\0';
+    return o;
+}
+
+/* Read one line from fd (up to maxlen). Returns length or -1. */
+static int _read_line(int fd, char *buf, int maxlen) {
+    int i = 0;
+    while (i < maxlen - 1) {
+        char c;
+        int n = (int)read(fd, &c, 1);
+        if (n <= 0) return -1;
+        buf[i++] = c;
+        if (c == '\n') break;
+    }
+    buf[i] = '\0';
+    return i;
+}
+
+static const char *WS_MAGIC = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+int y8_ws_accept(y8_ws *ws, int tcp_fd) {
+    ws->fd = tcp_fd;
+    ws->is_server = 1;
+
+    /* Read HTTP upgrade request, find Sec-WebSocket-Key */
+    char key[128] = {0};
+    char line[512];
+    while (_read_line(tcp_fd, line, sizeof(line)) > 0) {
+        if (line[0] == '\r' || line[0] == '\n') break;
+        if (strncmp(line, "Sec-WebSocket-Key:", 18) == 0) {
+            char *p = line + 18;
+            while (*p == ' ') p++;
+            int kl = 0;
+            while (p[kl] && p[kl] != '\r' && p[kl] != '\n') kl++;
+            memcpy(key, p, kl);
+            key[kl] = '\0';
+        }
+    }
+    if (!key[0]) return -1;
+
+    /* Compute accept: SHA1(key + magic), base64 */
+    char concat[256];
+    snprintf(concat, sizeof(concat), "%s%s", key, WS_MAGIC);
+    unsigned char hash[20];
+    _sha1((unsigned char *)concat, (int)strlen(concat), hash);
+    char accept[64];
+    _b64_encode(hash, 20, accept);
+
+    /* Send upgrade response */
+    char resp[512];
+    int rlen = snprintf(resp, sizeof(resp),
+        "HTTP/1.1 101 Switching Protocols\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Accept: %s\r\n\r\n", accept);
+    return write_all(tcp_fd, resp, rlen);
+}
+
+int y8_ws_connect(y8_ws *ws, const char *host, int port, const char *path) {
+    ws->is_server = 0;
+    ws->fd = y8_tcp_connect(host, port);
+    if (ws->fd < 0) return -1;
+
+    /* Send upgrade request with fixed key (test-friendly) */
+    char req[512];
+    int rlen = snprintf(req, sizeof(req),
+        "GET %s HTTP/1.1\r\n"
+        "Host: %s:%d\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+        "Sec-WebSocket-Version: 13\r\n\r\n",
+        path ? path : "/", host, port);
+    if (write_all(ws->fd, req, rlen) < 0) { close(ws->fd); ws->fd = -1; return -1; }
+
+    /* Read 101 response */
+    char line[512];
+    while (_read_line(ws->fd, line, sizeof(line)) > 0) {
+        if (line[0] == '\r' || line[0] == '\n') break;
+    }
+    return 0;
+}
+
+int y8_ws_send(y8_ws *ws, const char *data, int len) {
+    /* Binary frame: opcode 0x02 */
+    unsigned char hdr[14];
+    int hlen = 0;
+    hdr[0] = 0x82; /* FIN + binary */
+    if (ws->is_server) {
+        /* Server: no mask */
+        if (len < 126) { hdr[1] = (unsigned char)len; hlen = 2; }
+        else if (len < 65536) {
+            hdr[1] = 126;
+            hdr[2] = (len >> 8) & 0xFF;
+            hdr[3] = len & 0xFF;
+            hlen = 4;
+        } else {
+            hdr[1] = 127;
+            memset(hdr+2, 0, 4);
+            hdr[6] = (len >> 24) & 0xFF;
+            hdr[7] = (len >> 16) & 0xFF;
+            hdr[8] = (len >> 8) & 0xFF;
+            hdr[9] = len & 0xFF;
+            hlen = 10;
+        }
+    } else {
+        /* Client: mask bit set, mask = 0 (XOR with 0 = identity) */
+        if (len < 126) { hdr[1] = 0x80 | (unsigned char)len; hlen = 2; }
+        else if (len < 65536) {
+            hdr[1] = 0x80 | 126;
+            hdr[2] = (len >> 8) & 0xFF;
+            hdr[3] = len & 0xFF;
+            hlen = 4;
+        } else {
+            hdr[1] = 0x80 | 127;
+            memset(hdr+2, 0, 4);
+            hdr[6] = (len >> 24) & 0xFF;
+            hdr[7] = (len >> 16) & 0xFF;
+            hdr[8] = (len >> 8) & 0xFF;
+            hdr[9] = len & 0xFF;
+            hlen = 10;
+        }
+        /* 4-byte mask key = 0 */
+        memset(hdr + hlen, 0, 4);
+        hlen += 4;
+    }
+    if (write_all(ws->fd, (char *)hdr, hlen) < 0) return -1;
+    if (len > 0 && write_all(ws->fd, data, len) < 0) return -1;
+    return 0;
+}
+
+int y8_ws_recv(y8_ws *ws, char **data, int *len) {
+    unsigned char hdr[2];
+    if (read_all(ws->fd, (char *)hdr, 2) < 0) return -1;
+
+    int masked = (hdr[1] & 0x80) != 0;
+    uint64_t plen = hdr[1] & 0x7F;
+
+    if (plen == 126) {
+        unsigned char ext[2];
+        if (read_all(ws->fd, (char *)ext, 2) < 0) return -1;
+        plen = ((uint64_t)ext[0] << 8) | ext[1];
+    } else if (plen == 127) {
+        unsigned char ext[8];
+        if (read_all(ws->fd, (char *)ext, 8) < 0) return -1;
+        plen = 0;
+        for (int i = 0; i < 8; i++) plen = (plen << 8) | ext[i];
+    }
+
+    unsigned char mask[4] = {0};
+    if (masked) {
+        if (read_all(ws->fd, (char *)mask, 4) < 0) return -1;
+    }
+
+    if (plen > (uint64_t)Y8_NET_MAX_MSG) return -1;
+    char *buf = (char *)malloc((size_t)plen);
+    if (!buf) return -1;
+    if (plen > 0 && read_all(ws->fd, buf, (int)plen) < 0) { free(buf); return -1; }
+
+    /* Unmask if needed */
+    if (masked) {
+        for (uint64_t i = 0; i < plen; i++)
+            buf[i] ^= mask[i & 3];
+    }
+
+    /* Check for close frame (opcode 0x08) */
+    if ((hdr[0] & 0x0F) == 0x08) { free(buf); return -1; }
+
+    *data = buf;
+    *len = (int)plen;
+    return (int)plen;
+}
+
+void y8_ws_close(y8_ws *ws) {
+    if (ws->fd >= 0) {
+        /* Send close frame */
+        unsigned char close_frame[2] = {0x88, 0x00};
+        write(ws->fd, close_frame, 2);
+        close(ws->fd);
+        ws->fd = -1;
+    }
+}

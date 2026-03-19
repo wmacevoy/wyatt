@@ -132,4 +132,28 @@ int y8_udp_send(int fd, const char *host, int port,
    Returns payload length, -1 on error. */
 int y8_udp_recv(int fd, char **data, int *len);
 
+/* ── WebSocket transport ──────────────────────────────── */
+/* Binary WS frames.  Each frame = one QJSON message.      */
+/* No length-prefix needed (WS frames have boundaries).    */
+
+typedef struct {
+    int fd;
+    int is_server;  /* 1 = server (no mask), 0 = client (mask) */
+} y8_ws;
+
+/* Server: accept TCP, do HTTP upgrade handshake.
+   Returns 0 on success, -1 on error. */
+int y8_ws_accept(y8_ws *ws, int tcp_fd);
+
+/* Client: connect TCP, do HTTP upgrade handshake.
+   Returns 0 on success, -1 on error. */
+int y8_ws_connect(y8_ws *ws, const char *host, int port, const char *path);
+
+/* Send/recv QJSON as binary WS frames. */
+int y8_ws_send(y8_ws *ws, const char *data, int len);
+int y8_ws_recv(y8_ws *ws, char **data, int *len);
+
+/* Close with WS close frame. */
+void y8_ws_close(y8_ws *ws);
+
 #endif /* Y8_NET_H */

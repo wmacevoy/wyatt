@@ -663,6 +663,106 @@ static void test_tls_throughput(int count) {
     y8_tls_free(stls);
 }
 
+/* ── WebSocket transport ─────────────────────────────── */
+
+static void test_ws(int count) {
+    printf("\n=== WebSocket %d messages ===\n", count);
+    int server_fd = y8_tcp_listen(0);
+    if (server_fd < 0) { TEST("ws listen", 0); return; }
+    struct sockaddr_in saddr;
+    socklen_t slen = sizeof(saddr);
+    getsockname(server_fd, (struct sockaddr *)&saddr, &slen);
+    int port = ntohs(saddr.sin_port);
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        /* Child: WS client */
+        close(server_fd);
+        y8_ws ws;
+        if (y8_ws_connect(&ws, "127.0.0.1", port, "/") < 0) _exit(1);
+        for (int i = 0; i < count; i++) {
+            char msg[32];
+            int n = snprintf(msg, sizeof(msg), "ws-%d", i);
+            if (y8_ws_send(&ws, msg, n) < 0) { y8_ws_close(&ws); _exit(1); }
+        }
+        y8_ws_close(&ws);
+        _exit(0);
+    }
+
+    /* Parent: WS server */
+    int conn = y8_tcp_accept(server_fd);
+    close(server_fd);
+    y8_ws ws;
+    int acc = y8_ws_accept(&ws, conn);
+    TEST("ws handshake", acc == 0);
+
+    int ok = 1;
+    for (int i = 0; i < count; i++) {
+        char *buf = NULL; int len = 0;
+        int r = y8_ws_recv(&ws, &buf, &len);
+        char expected[32];
+        int elen = snprintf(expected, sizeof(expected), "ws-%d", i);
+        if (r != elen || !buf || memcmp(buf, expected, elen) != 0) ok = 0;
+        free(buf);
+    }
+    y8_ws_close(&ws);
+
+    int status;
+    waitpid(pid, &status, 0);
+    char tname[64];
+    snprintf(tname, sizeof(tname), "ws %d round-trip", count);
+    TEST(tname, ok && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+
+static void test_ws_throughput(int count) {
+    printf("\n=== WS throughput (%d messages) ===\n", count);
+    int server_fd = y8_tcp_listen(0);
+    if (server_fd < 0) { TEST("ws listen", 0); return; }
+    struct sockaddr_in saddr;
+    socklen_t slen = sizeof(saddr);
+    getsockname(server_fd, (struct sockaddr *)&saddr, &slen);
+    int port = ntohs(saddr.sin_port);
+
+    const char *msg = "{type:signal,from:sensor1,value:42}";
+    int msglen = (int)strlen(msg);
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        close(server_fd);
+        y8_ws ws;
+        if (y8_ws_connect(&ws, "127.0.0.1", port, "/") < 0) _exit(1);
+        for (int i = 0; i < count; i++) {
+            if (y8_ws_send(&ws, msg, msglen) < 0) { y8_ws_close(&ws); _exit(1); }
+        }
+        y8_ws_close(&ws);
+        _exit(0);
+    }
+
+    int conn = y8_tcp_accept(server_fd);
+    close(server_fd);
+    y8_ws ws;
+    y8_ws_accept(&ws, conn);
+
+    struct timeval t0, t1;
+    gettimeofday(&t0, NULL);
+    for (int i = 0; i < count; i++) {
+        char *buf = NULL; int len = 0;
+        y8_ws_recv(&ws, &buf, &len);
+        free(buf);
+    }
+    gettimeofday(&t1, NULL);
+    y8_ws_close(&ws);
+
+    int status;
+    waitpid(pid, &status, 0);
+    double ms = (t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_usec - t0.tv_usec) / 1000.0;
+    printf("  %d messages in %.1f ms (%.1f K msg/sec)\n", count, ms, count / ms);
+
+    char tname[64];
+    snprintf(tname, sizeof(tname), "ws throughput %d", count);
+    TEST(tname, WIFEXITED(status) && WEXITSTATUS(status) == 0 && ms > 0);
+}
+
 /* ── Main ────────────────────────────────────────────── */
 
 int main(void) {
@@ -692,6 +792,9 @@ int main(void) {
     test_tls();
     test_tls_throughput(1000);
     test_tls_throughput(10000);
+    test_ws(10);
+    test_ws(1000);
+    test_ws_throughput(10000);
 
     printf("\n%d/%d tests passed\n", pass, pass + fail);
     return fail ? 1 : 0;
