@@ -316,6 +316,22 @@ Each example demonstrates a different layer.  All are tested.
 | `docs/qsql.md` | Storage: projection, comparison, persistence |
 | `docs/qsql-intervals.md` | Interval arithmetic deep dive |
 | `docs/mineralize.md` | fossilize vs mineralize |
+| `docs/network.md` | Transport: pipe, TCP, UDP, WebSocket, TLS |
+
+## Transport (y8_net)
+
+Four transports over QJSON wire format.  ~570 lines of C.
+
+| Transport | msg/sec | Use case |
+|-----------|--------:|----------|
+| Pipe | 1.5M | Local IPC, child processes |
+| TCP | 2.2M | Den-to-den, reliable channels |
+| WebSocket | 1.5M | Browser clients |
+| TLS | 700K | Encrypted channels |
+| UDP | fire-and-forget | Sensor readings |
+
+Auto-reconnect with exponential backoff (1ms → 4096ms).
+64 tests.  See `docs/network.md`.
 
 ## License
 

@@ -1,12 +1,26 @@
 # y8 network — QJSON over wires
 
-Loosely opinionated transport for y8 engines.  QJSON payloads
-over four transports: TCP/TLS, UDP/DTLS, WebSocket, pipe.
-Same framing, same wire format, same engine interface.
+Four transports, one wire format, ~570 lines of C.
+POSIX only. LibreSSL optional for TLS.
+
+## Results
+
+| Transport | Throughput | Use case |
+|-----------|-----------|----------|
+| Pipe (socketpair) | 1.5M msg/sec | Local IPC, child processes |
+| TCP (localhost) | 2.2M msg/sec | Den-to-den, strata village |
+| WebSocket | 1.5M msg/sec | Browser clients |
+| TLS (RSA-2048) | 700K msg/sec | Encrypted channels |
+| UDP | fire-and-forget | Sensor readings |
+
+64 tests.  Fork-based (y8's model: isolated single-threaded
+processes).
 
 ## Wire format
 
-Every message is a length-prefixed QJSON payload:
+### Pipe + TCP + TLS
+
+Length-prefixed QJSON:
 
 ```
 ┌──────────────┬─────────────────────────┐
@@ -16,192 +30,110 @@ Every message is a length-prefixed QJSON payload:
 └──────────────┴─────────────────────────┘
 ```
 
-- `size = 0` → keepalive ping (no payload)
-- `size > 0` → QJSON message
-- Maximum message size: 16 MB (configurable)
-- QJSON is binary-safe: encrypted payloads, keys, checksums
-  travel as `0j` blobs.  No base64.  No escaping.
+`size = 0` → keepalive ping.  Max 16 MB.
 
-## Transports
+### WebSocket
 
-### TCP/TLS — reliable, encrypted
+Binary WS frames (opcode 0x02).  Each frame = one QJSON
+message.  No length-prefix needed (WS frames have boundaries).
 
-```c
-y8_conn *c = y8_tcp_connect("host", 4433, tls_ctx);
-y8_send(c, qjson_buf, qjson_len);     // length-prefix + write
-y8_recv(c, &buf, &len);               // read length + read payload
-y8_close(c);
-```
+### UDP
 
-- LibreSSL for TLS (or plaintext for local dev)
-- Length-prefix framing over the TLS stream
-- Application-level keepalive: ping every 30s, dead after 60s
-- Auto-reconnect with exponential backoff (100ms → 200ms → ... → 10s)
-- Use case: den-to-den, strata village, any reliable channel
+Raw datagrams.  Each datagram = one QJSON message.
+No framing.  Max ~65KB.
 
-### UDP/DTLS — fire-and-forget
+## API
 
 ```c
-y8_conn *c = y8_udp_open("host", 4434, dtls_ctx);
-y8_send(c, qjson_buf, qjson_len);     // one datagram = one message
-y8_recv(c, &buf, &len);               // receive one datagram
-y8_close(c);
+/* ── Framing (shared by pipe, TCP, TLS) ──────────── */
+int y8_frame_write(int fd, const char *data, int len);
+int y8_frame_read(int fd, char **data, int *len);
+int y8_frame_ping(int fd);
+
+/* ── Pipe ────────────────────────────────────────── */
+y8_pipe p;
+y8_pipe_init(&p, read_fd, write_fd);
+y8_pipe_send(&p, data, len);
+y8_pipe_recv(&p, &data, &len);
+y8_pipe_close(&p);
+
+/* ── TCP ─────────────────────────────────────────── */
+int server_fd = y8_tcp_listen(port);   // 0 = ephemeral
+int conn_fd = y8_tcp_accept(server_fd);
+int client_fd = y8_tcp_connect("host", port);
+// Then use y8_frame_write/read on the fd.
+
+/* ── TCP with auto-reconnect ────────────────────── */
+y8_tcp_conn c;
+y8_tcp_conn_init(&c, "host", port, tls);  // tls=NULL for plain
+y8_tcp_conn_send(&c, data, len);           // reconnects on failure
+y8_tcp_conn_recv(&c, &data, &len);
+y8_tcp_conn_close(&c);
+
+/* ── TLS ─────────────────────────────────────────── */
+y8_tls_ctx *stls = y8_tls_server("cert.pem", "key.pem");
+y8_tls_ctx *ctls = y8_tls_client(NULL);  // NULL = no verify
+int conn = y8_tcp_accept_tls(server_fd, stls, &ssl);
+y8_frame_write_ssl(ssl, data, len);
+y8_frame_read_ssl(ssl, &data, &len);
+y8_tls_free(stls);
+
+/* ── UDP ─────────────────────────────────────────── */
+int fd = y8_udp_open(port);  // 0 = ephemeral
+y8_udp_send(fd, "host", port, data, len);
+y8_udp_recv(fd, &data, &len);
+
+/* ── WebSocket ───────────────────────────────────── */
+y8_ws ws;
+y8_ws_connect(&ws, "host", port, "/path");  // client
+y8_ws_accept(&ws, tcp_fd);                   // server
+y8_ws_send(&ws, data, len);                  // binary frame
+y8_ws_recv(&ws, &data, &len);
+y8_ws_close(&ws);
 ```
 
-- No framing needed: each UDP datagram IS one message
-- DTLS for encryption (LibreSSL)
-- No reconnection (stateless)
-- No keepalive (stateless)
-- Max message size: MTU (~1400 bytes with DTLS overhead)
-- Use case: sensor readings, fire-and-forget telemetry
+## Auto-reconnect
 
-### WebSocket — browser-friendly
+`y8_tcp_conn` detects broken connections via `recv(MSG_PEEK)`
+and reconnects with exponential backoff:
 
-```c
-y8_conn *c = y8_ws_connect("wss://host/path", tls_ctx);
-y8_send(c, qjson_buf, qjson_len);     // one WS frame = one message
-y8_recv(c, &buf, &len);               // receive one WS frame
-y8_close(c);
+```
+1ms → 2ms → 4ms → ... → 4096ms (cap)
 ```
 
-- HTTP upgrade handshake, then framed binary messages
-- WebSocket frames provide message boundaries (no length-prefix needed)
-- wss:// for encryption (TLS via LibreSSL)
-- Built-in ping/pong keepalive (WebSocket spec)
-- Works through HTTP proxies and firewalls
-- Use case: browser, sync-todo, any HTTP environment
+On successful reconnect, backoff resets to 1ms.  TLS sessions
+re-handshake on reconnect (session resumption is possible with
+LibreSSL but not yet implemented).
 
-### Pipe — local, zero overhead
+## Files
 
-```c
-y8_conn *c = y8_pipe_open(read_fd, write_fd);   // stdio, socketpair
-y8_send(c, qjson_buf, qjson_len);               // length-prefix + write
-y8_recv(c, &buf, &len);                          // read length + read payload
-y8_close(c);
+```
+native/
+  y8_net.h          — unified API (all transports)
+  y8_net.c          — implementation (~570 lines)
+  test_y8_net.c     — 64 tests (fork-based stress)
 ```
 
-- Length-prefix framing over file descriptors
-- stdin/stdout for child processes
-- Unix domain socket for same-machine IPC
-- No encryption (same machine, same user)
-- Use case: strata spawning dens, tool calls, Claude ↔ den
+Zero dependencies for pipe + TCP + UDP + WebSocket.
+Add `-lssl -lcrypto` for TLS.
 
-## Unified API
+## Transport selection
 
-```c
-/* Connection — opaque, transport-independent */
-typedef struct y8_conn y8_conn;
-
-/* Send a QJSON message.  Returns 0 on success, -1 on error. */
-int y8_send(y8_conn *c, const char *data, int len);
-
-/* Receive a QJSON message.  Caller frees *data.
-   Returns payload length, 0 for keepalive, -1 on error. */
-int y8_recv(y8_conn *c, char **data, int *len);
-
-/* Close and free. */
-void y8_close(y8_conn *c);
-
-/* Connection state. */
-int y8_connected(y8_conn *c);
-const char *y8_error(y8_conn *c);
-```
-
-The engine doesn't know which transport it's using:
+The engine doesn't know which transport it's using.
+Strata wires the transport when spawning a den:
 
 ```prolog
+% These rules work over any transport
 react({type: signal, from: From, value: Val}) :-
     trusted(From),
     assert(reading(From, Val)),
     send(dashboard, {from: From, value: Val}).
 ```
 
-Strata wires the transport when spawning the den.  The
-rules don't change.
-
-## Framing layer
-
-Shared by TCP/TLS and pipe.  WebSocket and UDP have
-built-in message boundaries.
-
-```c
-/* Write a length-prefixed frame.  Returns 0/-1. */
-int y8_frame_write(int fd, const char *data, int len);
-int y8_frame_write_ssl(SSL *ssl, const char *data, int len);
-
-/* Read a length-prefixed frame.  Caller frees *data.
-   Returns payload length, 0 for keepalive, -1 on error/EOF. */
-int y8_frame_read(int fd, char **data, int *len);
-int y8_frame_read_ssl(SSL *ssl, char **data, int *len);
-
-/* Send keepalive (zero-length frame). */
-int y8_frame_ping(int fd);
-int y8_frame_ping_ssl(SSL *ssl);
-```
-
-Read is blocking but respects the 4-byte length prefix —
-no partial messages, no merged messages.  Each call returns
-exactly one complete QJSON payload.
-
-## Keepalive protocol
-
-For TCP/TLS and pipe:
-
-- Sender: if no message sent for 30s, send ping (size=0)
-- Receiver: if no message received for 60s, connection is dead
-- On dead connection: close, attempt reconnect
-- Reconnect: exponential backoff 100ms → 200ms → 400ms → ... → 10s cap
-
-WebSocket: uses WS ping/pong (built-in, same 30s/60s timing).
-UDP: no keepalive (stateless).
-
-## Reconnection
-
-TCP/TLS and WebSocket auto-reconnect on failure:
-
-```
-connected → send/recv normally
-         → no data for 60s → dead
-         → send/recv error → dead
-dead      → close socket
-         → wait backoff_ms
-         → attempt connect
-         → success → connected (backoff resets to 100ms)
-         → failure → double backoff (cap 10s), retry
-```
-
-The engine sees: `y8_send` returns -1.  Next `y8_send`
-attempts reconnect transparently.  Messages during
-reconnection are lost (not queued — this is intentional;
-the engine should resend if needed).
-
-## Stress test
-
-The framing layer is the critical path.  Test:
-
-1. **Throughput**: send 1M messages, measure msg/sec
-2. **Partial writes**: sender writes half a frame, pauses, writes rest
-3. **Partial reads**: receiver reads 1 byte at a time
-4. **Interleaved**: rapid send/recv on both ends simultaneously
-5. **Large messages**: 1MB QJSON payloads
-6. **Keepalive**: idle for 90s, verify connection stays alive
-7. **Dead detection**: kill one end, verify other detects within 60s
-8. **Reconnect**: kill server, restart, verify client reconnects
-9. **Concurrent connections**: 100 simultaneous connections
-10. **Binary safety**: send 0j blobs with all 256 byte values
-
-## Files
-
-```
-native/
-  y8_net.h          — unified API + framing declarations
-  y8_net.c          — framing layer + pipe transport
-  y8_net_tcp.c      — TCP/TLS transport (requires LibreSSL)
-  y8_net_udp.c      — UDP/DTLS transport (requires LibreSSL)
-  y8_net_ws.c       — WebSocket transport
-  test_y8_net.c     — framing + pipe stress tests
-```
-
-Framing + pipe have zero dependencies (just POSIX).
-TCP/TLS and UDP/DTLS require LibreSSL.
-WebSocket requires the framing layer + HTTP upgrade (~80 lines).
+| Environment | Transport | Why |
+|------------|-----------|-----|
+| Same machine | Pipe | Zero overhead, no encryption needed |
+| LAN / datacenter | TCP/TLS | Reliable, encrypted |
+| IoT sensors | UDP | Fire-and-forget, lossy OK |
+| Browser | WebSocket | Only option through HTTP |
+| Behind firewall | WebSocket (wss://) | Tunnels through HTTP proxy |

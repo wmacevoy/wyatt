@@ -31,8 +31,8 @@ if [ -z "$1" ] || [ "$1" = "c" ]; then
       "gcc -O2 -Wall -std=c11 -o native/test_core native/test_core.c native/prolog_core.c && ./native/test_core && rm -f native/test_core"
     run "C native y8_qjson (141 tests)" \
       "gcc -O2 -Wall -std=c11 -frounding-math -o native/test_y8_qjson native/test_y8_qjson.c native/y8_qjson.c -lm && ./native/test_y8_qjson && rm -f native/test_y8_qjson"
-    run "C native y8_net (stress)" \
-      "gcc -O2 -Wall -std=c11 -o native/test_y8_net native/test_y8_net.c native/y8_net.c -lpthread && ./native/test_y8_net && rm -f native/test_y8_net"
+    run "C native y8_net (64 tests)" \
+      "gcc -O2 -Wall -std=c11 -o native/test_y8_net native/test_y8_net.c native/y8_net.c -lssl -lcrypto && ./native/test_y8_net && rm -f native/test_y8_net"
   else
     echo "  (skipping C tests — gcc not found)"
   fi
