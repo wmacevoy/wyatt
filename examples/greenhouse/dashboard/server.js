@@ -16,7 +16,6 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PrologEngine, listToArray } from "../../../src/prolog-engine.js";
 import { loadString } from "../../../src/loader.js";
-import { createReactiveEngine } from "../../../src/reactive-prolog.js";
 import { serialize, deserialize } from "../../../src/sync.js";
 
 var atom     = PrologEngine.atom;
@@ -57,53 +56,51 @@ var RULES = [
   "threshold(humidity, 20, 85).",
   "threshold(vpd, 40, 160).",
   "",
-  "handle_signal(From, Fact) :- ephemeral(signal(From, Fact)), react.",
-  "",
-  "react :- signal(From, reading(From, Type, Val, Ts)),",
-  "         node_role(coordinator),",
-  "         node_status(From, online),",
-  "         retractall(reading(From, Type, A, B)),",
-  "         assert(reading(From, Type, Val, Ts)),",
-  "         check_alerts(From, Type).",
+  "react({type: signal, from: From, fact: reading(From, Type, Val, Ts)}) :-",
+  "    node_role(coordinator),",
+  "    node_status(From, online),",
+  "    retractall(reading(From, Type, _OldA, _OldB)),",
+  "    assert(reading(From, Type, Val, Ts)),",
+  "    check_alerts(From, Type).",
   "check_alerts(Node, Type) :- alert(Node, Type, Level),",
   "    send(gateway, alert_notice(Node, Type, Level)).",
-  "check_alerts(A, B).",
-  "react :- signal(estimator, estimate(Type, Node, Val, Confidence, Ts)),",
-  "         node_role(coordinator),",
-  "         retractall(estimate(Type, Node, A, B, C)),",
-  "         assert(estimate(Type, Node, Val, Confidence, Ts)),",
-  "         send(gateway, estimate(Type, Node, Val, Confidence, Ts)).",
-  "react :- signal(From, node_status(From, Status)),",
-  "         node_role(coordinator),",
-  "         retractall(node_status(From, A)),",
-  "         assert(node_status(From, Status)).",
+  "check_alerts(_AnyNode, _AnyType).",
+  "react({type: signal, from: estimator, fact: estimate(Type, Node, Val, Confidence, Ts)}) :-",
+  "    node_role(coordinator),",
+  "    retractall(estimate(Type, Node, _OldA, _OldB, _OldC)),",
+  "    assert(estimate(Type, Node, Val, Confidence, Ts)),",
+  "    send(gateway, estimate(Type, Node, Val, Confidence, Ts)).",
+  "react({type: signal, from: From, fact: node_status(From, Status)}) :-",
+  "    node_role(coordinator),",
+  "    retractall(node_status(From, _OldS)),",
+  "    assert(node_status(From, Status)).",
   "",
   "alert(Node, temperature, high) :-",
-  "    reading(Node, temperature, Val, Ts),",
-  "    threshold(temperature, Min, Max), Val > Max.",
+  "    reading(Node, temperature, Val, _Ts),",
+  "    threshold(temperature, _Min, Max), Val > Max.",
   "alert(Node, temperature, low) :-",
-  "    reading(Node, temperature, Val, Ts),",
-  "    threshold(temperature, Min, Max), Val < Min.",
+  "    reading(Node, temperature, Val, _Ts),",
+  "    threshold(temperature, Min, _Max), Val < Min.",
   "alert(Node, humidity, high) :-",
-  "    reading(Node, humidity, Val, Ts),",
-  "    threshold(humidity, Min, Max), Val > Max.",
+  "    reading(Node, humidity, Val, _Ts),",
+  "    threshold(humidity, _Min, Max), Val > Max.",
   "alert(Node, humidity, low) :-",
-  "    reading(Node, humidity, Val, Ts),",
-  "    threshold(humidity, Min, Max), Val < Min.",
+  "    reading(Node, humidity, Val, _Ts),",
+  "    threshold(humidity, Min, _Max), Val < Min.",
   "alert(Node, vpd, high) :-",
-  "    estimate(vpd, Node, Val, Confidence, Ts),",
-  "    threshold(vpd, Min, Max), Val > Max.",
+  "    estimate(vpd, Node, Val, _Confidence, _Ts),",
+  "    threshold(vpd, _Min, Max), Val > Max.",
   "alert(Node, vpd, low) :-",
-  "    estimate(vpd, Node, Val, Confidence, Ts),",
-  "    threshold(vpd, Min, Max), Val < Min.",
+  "    estimate(vpd, Node, Val, _Confidence, _Ts),",
+  "    threshold(vpd, Min, _Max), Val < Min.",
   "",
   "all_alerts(Alerts) :- findall(alert(N,T,L), alert(N,T,L), Alerts).",
   "online_nodes(Nodes) :- findall(N, node_status(N, online), Nodes).",
-  "mesh_status(critical) :- alert(A, B, C).",
-  "mesh_status(normal) :- not(alert(A, B, C)).",
+  "mesh_status(critical) :- alert(_A, _B, _C).",
+  "mesh_status(normal) :- not(alert(_A, _B, _C)).",
   "",
   "update_threshold(Type, Min, Max) :-",
-  "    retractall(threshold(Type, A, B)),",
+  "    retractall(threshold(Type, _OldA, _OldB)),",
   "    assert(threshold(Type, Min, Max)),",
   "    send(gateway, threshold(Type, Min, Max))."
 ].join("\n");
@@ -112,9 +109,6 @@ loadString(engine, RULES);
 
 engine.addClause(compound("node_role", [atom("coordinator")]));
 engine.addClause(compound("node_id",   [atom("coordinator")]));
-
-// Register ephemeral/1 builtin
-createReactiveEngine(engine);
 
 // ── SSE client management ─────────────────────────────────────
 
@@ -220,11 +214,29 @@ function getState() {
 // ── Signal handling ───────────────────────────────────────────
 
 function handleSignal(from, fact) {
-  var result = engine.queryWithSends(
-    compound("handle_signal", [atom(from), fact])
-  );
+  // Track whether react rules mutated the DB (= signal accepted)
+  var mutated = false;
+  var markDirty = function() { mutated = true; };
+  engine.onAssert.push(markDirty);
+  engine.onRetract.push(markDirty);
 
-  if (!result.result) {
+  // Fire ephemeral with QJSON object event, collect sends
+  engine._sends = [];
+  engine.queryFirst(compound("ephemeral", [
+    PrologEngine.object([
+      { key: "type", value: atom("signal") },
+      { key: "from", value: atom(from) },
+      { key: "fact", value: fact }
+    ])
+  ]));
+  var sends = engine._sends.slice();
+  engine._sends = [];
+
+  // Remove temporary mutation tracker
+  engine.onAssert.pop();
+  engine.onRetract.pop();
+
+  if (!mutated) {
     console.log("[dashboard] dropped signal from " + from +
                 " (" + (fact.functor || fact.name || "?") + ")");
     return;
@@ -233,8 +245,8 @@ function handleSignal(from, fact) {
   console.log("[dashboard] accepted " + (fact.functor || fact.name) + " from " + from);
 
   // Dispatch all sends from Prolog react rules
-  for (var i = 0; i < result.sends.length; i++) {
-    var s = result.sends[i];
+  for (var i = 0; i < sends.length; i++) {
+    var s = sends[i];
     var targetName = s.target.name;
     if (targetName === "gateway") {
       sendToGateway(s.fact);

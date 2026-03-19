@@ -29,10 +29,17 @@ export class GreenhouseNode {
     this._signalLog = [];
 
     const engine = buildGreenhouseKB(PrologEngine, this.id, this.role);
+
+    // Save the engine's built-in ephemeral/1 (fires _fireReact)
+    const nativeEphemeral = engine.builtins["ephemeral/1"];
+
     const reactive = createReactiveEngine(engine);
 
-    // Attach persistence — ephemeral/1 is already registered by
-    // createReactiveEngine, so ephemeral scopes = SQL transactions.
+    // Restore engine's native ephemeral/1 — the reactive layer overrides
+    // it with old assert/solve/retract, but we want _fireReact dispatch.
+    engine.builtins["ephemeral/1"] = nativeEphemeral;
+
+    // Attach persistence — createReactiveEngine provides auto-bump on mutations.
     if (options.db) {
       this.db = persist(engine, options.db);
     }
@@ -57,27 +64,44 @@ export class GreenhouseNode {
     const fact = deserialize(payload.fact);
     if (!fact) return;
 
-    const result = this.engine.queryWithSends(
-      compound("handle_signal", [atom(fromAddress), fact])
-    );
+    // Track whether react rules mutated the DB (= signal accepted)
+    let mutated = false;
+    const markDirty = function() { mutated = true; };
+    this.engine.onAssert.push(markDirty);
+    this.engine.onRetract.push(markDirty);
+
+    // Fire ephemeral with QJSON object event, collect sends
+    this.engine._sends = [];
+    this.engine.queryFirst(compound("ephemeral", [
+      PrologEngine.object([
+        { key: "type", value: atom("signal") },
+        { key: "from", value: atom(fromAddress) },
+        { key: "fact", value: fact }
+      ])
+    ]));
+    const sends = this.engine._sends.slice();
+    this.engine._sends = [];
+
+    // Remove our temporary mutation tracker
+    this.engine.onAssert.pop();
+    this.engine.onRetract.pop();
 
     this._signalLog.push({
       from: fromAddress,
       fact: fact,
-      accepted: result.result !== null
+      accepted: mutated
     });
 
-    if (result.result) {
+    if (mutated) {
       // Dispatch all sends from Prolog react rules
-      for (var i = 0; i < result.sends.length; i++) {
-        var s = result.sends[i];
+      for (var i = 0; i < sends.length; i++) {
+        var s = sends[i];
         this.transport.send(s.target.name, {
           kind: "signal",
           from: this.id,
           fact: serialize(s.fact)
         });
       }
-      this.reactive.bump();
     }
   }
 

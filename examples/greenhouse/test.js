@@ -12,7 +12,7 @@ import { SimBus } from "../nng-mesh/transport.js";
 import { buildGreenhouseKB } from "./greenhouse-kb.js";
 import { GreenhouseNode } from "./node.js";
 
-const { atom, variable, compound, num } = PrologEngine;
+const { atom, variable, compound, num, object: obj } = PrologEngine;
 
 // ── Test framework ──────────────────────────────────────────
 
@@ -47,12 +47,36 @@ function fullMesh() {
   ]);
 }
 
-// ── Helper: build a reactive engine for policy tests ────
+// ── Helper: build engine for policy tests ───────────────
+// ephemeral/1 is a built-in that fires _fireReact → react rules.
 
-function buildReactiveKB(nodeId, role) {
-  const engine = buildGreenhouseKB(PrologEngine, nodeId, role);
-  createReactiveEngine(engine); // registers ephemeral/1
-  return engine;
+function buildTestKB(nodeId, role) {
+  return buildGreenhouseKB(PrologEngine, nodeId, role);
+}
+
+// ── Helper: fire a signal via ephemeral and detect acceptance ──
+
+function fireSignal(engine, fromAddress, fact) {
+  let mutated = false;
+  const markDirty = function() { mutated = true; };
+  engine.onAssert.push(markDirty);
+  engine.onRetract.push(markDirty);
+
+  engine._sends = [];
+  engine.queryFirst(compound("ephemeral", [
+    obj([
+      { key: "type", value: atom("signal") },
+      { key: "from", value: atom(fromAddress) },
+      { key: "fact", value: fact }
+    ])
+  ]));
+  const sends = engine._sends.slice();
+  engine._sends = [];
+
+  engine.onAssert.pop();
+  engine.onRetract.pop();
+
+  return { accepted: mutated, sends: sends };
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -129,51 +153,51 @@ describe("Greenhouse KB rules", () => {
 
 describe("Signal policy — coordinator", () => {
   it("accepts reading from online sensor", () => {
-    const e = buildReactiveKB("coordinator", "coordinator");
+    const e = buildTestKB("coordinator", "coordinator");
     e.addClause(compound("node_status", [atom("s1"), atom("online")]));
     const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
-    const r = e.queryFirst(compound("handle_signal", [atom("s1"), fact]));
-    assert(r !== null, "should accept reading");
+    const r = fireSignal(e, "s1", fact);
+    assert(r.accepted, "should accept reading");
     const reading = e.queryFirst(compound("reading", [atom("s1"), atom("temperature"), variable("V"), variable("T")]));
     eq(reading.args[2].value, 22);
   });
 
   it("rejects reading from unknown sensor", () => {
-    const e = buildReactiveKB("coordinator", "coordinator");
+    const e = buildTestKB("coordinator", "coordinator");
     const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
-    const r = e.queryFirst(compound("handle_signal", [atom("s1"), fact]));
-    eq(r, null);
+    const r = fireSignal(e, "s1", fact);
+    eq(r.accepted, false);
   });
 
   it("rejects spoofed reading (From mismatch)", () => {
-    const e = buildReactiveKB("coordinator", "coordinator");
+    const e = buildTestKB("coordinator", "coordinator");
     e.addClause(compound("node_status", [atom("s1"), atom("online")]));
     const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
-    const r = e.queryFirst(compound("handle_signal", [atom("s2"), fact]));
-    eq(r, null);
+    const r = fireSignal(e, "s2", fact);
+    eq(r.accepted, false);
   });
 
   it("accepts estimate from estimator", () => {
-    const e = buildReactiveKB("coordinator", "coordinator");
+    const e = buildTestKB("coordinator", "coordinator");
     const fact = compound("estimate", [atom("vpd"), atom("s1"), num(80), num(100), num(1000)]);
-    const r = e.queryFirst(compound("handle_signal", [atom("estimator"), fact]));
-    assert(r !== null, "should accept estimate");
+    const r = fireSignal(e, "estimator", fact);
+    assert(r.accepted, "should accept estimate");
     const est = e.queryFirst(compound("estimate", [atom("vpd"), atom("s1"), variable("V"), variable("C"), variable("T")]));
     eq(est.args[2].value, 80);
   });
 
   it("rejects estimate from non-estimator", () => {
-    const e = buildReactiveKB("coordinator", "coordinator");
+    const e = buildTestKB("coordinator", "coordinator");
     const fact = compound("estimate", [atom("vpd"), atom("s1"), num(80), num(100), num(1000)]);
-    const r = e.queryFirst(compound("handle_signal", [atom("rogue"), fact]));
-    eq(r, null);
+    const r = fireSignal(e, "rogue", fact);
+    eq(r.accepted, false);
   });
 
   it("accepts node_status from anyone", () => {
-    const e = buildReactiveKB("coordinator", "coordinator");
+    const e = buildTestKB("coordinator", "coordinator");
     const fact = compound("node_status", [atom("new_node"), atom("online")]);
-    const r = e.queryFirst(compound("handle_signal", [atom("new_node"), fact]));
-    assert(r !== null, "should accept node_status");
+    const r = fireSignal(e, "new_node", fact);
+    assert(r.accepted, "should accept node_status");
     const status = e.queryFirst(compound("node_status", [atom("new_node"), variable("S")]));
     eq(status.args[1].name, "online");
   });
@@ -183,34 +207,34 @@ describe("Signal policy — coordinator", () => {
 
 describe("Signal policy — sensor", () => {
   it("accepts calibration from coordinator", () => {
-    const e = buildReactiveKB("sensor_1", "sensor");
+    const e = buildTestKB("sensor_1", "sensor");
     const fact = compound("calibration", [atom("sensor_1"), atom("temperature"), num(2)]);
-    const r = e.queryFirst(compound("handle_signal", [atom("coordinator"), fact]));
-    assert(r !== null, "should accept calibration");
+    const r = fireSignal(e, "coordinator", fact);
+    assert(r.accepted, "should accept calibration");
   });
 
   it("accepts threshold from coordinator", () => {
-    const e = buildReactiveKB("sensor_1", "sensor");
+    const e = buildTestKB("sensor_1", "sensor");
     const fact = compound("threshold", [atom("temperature"), num(0), num(50)]);
-    const r = e.queryFirst(compound("handle_signal", [atom("coordinator"), fact]));
-    assert(r !== null, "should accept threshold");
+    const r = fireSignal(e, "coordinator", fact);
+    assert(r.accepted, "should accept threshold");
     const th = e.queryFirst(compound("threshold", [atom("temperature"), variable("Min"), variable("Max")]));
     eq(th.args[1].value, 0);
     eq(th.args[2].value, 50);
   });
 
   it("ignores readings from other nodes", () => {
-    const e = buildReactiveKB("sensor_1", "sensor");
+    const e = buildTestKB("sensor_1", "sensor");
     const fact = compound("reading", [atom("s2"), atom("temperature"), num(22), num(1000)]);
-    const r = e.queryFirst(compound("handle_signal", [atom("s2"), fact]));
-    eq(r, null);
+    const r = fireSignal(e, "s2", fact);
+    eq(r.accepted, false);
   });
 
   it("ignores calibration from non-coordinator", () => {
-    const e = buildReactiveKB("sensor_1", "sensor");
+    const e = buildTestKB("sensor_1", "sensor");
     const fact = compound("calibration", [atom("sensor_1"), atom("temperature"), num(2)]);
-    const r = e.queryFirst(compound("handle_signal", [atom("rogue"), fact]));
-    eq(r, null);
+    const r = fireSignal(e, "rogue", fact);
+    eq(r.accepted, false);
   });
 });
 
@@ -218,25 +242,25 @@ describe("Signal policy — sensor", () => {
 
 describe("Signal policy — estimator", () => {
   it("accepts reading from online sensor", () => {
-    const e = buildReactiveKB("estimator", "estimator");
+    const e = buildTestKB("estimator", "estimator");
     e.addClause(compound("node_status", [atom("s1"), atom("online")]));
     const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
-    const r = e.queryFirst(compound("handle_signal", [atom("s1"), fact]));
-    assert(r !== null, "should accept reading");
+    const r = fireSignal(e, "s1", fact);
+    assert(r.accepted, "should accept reading");
   });
 
   it("rejects reading from offline sensor", () => {
-    const e = buildReactiveKB("estimator", "estimator");
+    const e = buildTestKB("estimator", "estimator");
     const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
-    const r = e.queryFirst(compound("handle_signal", [atom("s1"), fact]));
-    eq(r, null);
+    const r = fireSignal(e, "s1", fact);
+    eq(r.accepted, false);
   });
 
   it("ignores calibration signals", () => {
-    const e = buildReactiveKB("estimator", "estimator");
+    const e = buildTestKB("estimator", "estimator");
     const fact = compound("calibration", [atom("s1"), atom("temperature"), num(2)]);
-    const r = e.queryFirst(compound("handle_signal", [atom("coordinator"), fact]));
-    eq(r, null);
+    const r = fireSignal(e, "coordinator", fact);
+    eq(r.accepted, false);
   });
 });
 
@@ -244,33 +268,33 @@ describe("Signal policy — estimator", () => {
 
 describe("Signal policy — gateway", () => {
   it("accepts estimate from coordinator", () => {
-    const e = buildReactiveKB("gateway", "gateway");
+    const e = buildTestKB("gateway", "gateway");
     const fact = compound("estimate", [atom("vpd"), atom("s1"), num(80), num(100), num(1000)]);
-    const r = e.queryFirst(compound("handle_signal", [atom("coordinator"), fact]));
-    assert(r !== null, "should accept estimate");
+    const r = fireSignal(e, "coordinator", fact);
+    assert(r.accepted, "should accept estimate");
     const est = e.queryFirst(compound("estimate", [atom("vpd"), atom("s1"), variable("V"), variable("C"), variable("T")]));
     eq(est.args[2].value, 80);
   });
 
   it("accepts alert_notice from coordinator", () => {
-    const e = buildReactiveKB("gateway", "gateway");
+    const e = buildTestKB("gateway", "gateway");
     const fact = compound("alert_notice", [atom("s1"), atom("temperature"), atom("high")]);
-    const r = e.queryFirst(compound("handle_signal", [atom("coordinator"), fact]));
-    assert(r !== null, "should accept alert_notice");
+    const r = fireSignal(e, "coordinator", fact);
+    assert(r.accepted, "should accept alert_notice");
   });
 
   it("ignores readings", () => {
-    const e = buildReactiveKB("gateway", "gateway");
+    const e = buildTestKB("gateway", "gateway");
     const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
-    const r = e.queryFirst(compound("handle_signal", [atom("s1"), fact]));
-    eq(r, null);
+    const r = fireSignal(e, "s1", fact);
+    eq(r.accepted, false);
   });
 
   it("rejects estimate from non-coordinator", () => {
-    const e = buildReactiveKB("gateway", "gateway");
+    const e = buildTestKB("gateway", "gateway");
     const fact = compound("estimate", [atom("vpd"), atom("s1"), num(80), num(100), num(1000)]);
-    const r = e.queryFirst(compound("handle_signal", [atom("rogue"), fact]));
-    eq(r, null);
+    const r = fireSignal(e, "rogue", fact);
+    eq(r.accepted, false);
   });
 });
 
@@ -281,7 +305,6 @@ describe("GreenhouseNode integration", () => {
     const { nodes } = fullMesh();
     const coord = nodes.coordinator;
     coord.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
-    coord.reactive.bump();
 
     nodes.sensor_1.send("coordinator",
       compound("reading", [atom("sensor_1"), atom("temperature"), num(23), num(1000)]));
@@ -307,7 +330,6 @@ describe("GreenhouseNode integration", () => {
     const { nodes } = fullMesh();
     const coord = nodes.coordinator;
     coord.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
-    coord.reactive.bump();
 
     nodes.sensor_1.send("coordinator",
       compound("reading", [atom("sensor_1"), atom("temperature"), num(20), num(100)]));
@@ -343,7 +365,6 @@ describe("GreenhouseNode integration", () => {
     const { nodes } = fullMesh();
     const coord = nodes.coordinator;
     coord.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
-    coord.reactive.bump();
 
     nodes.sensor_2.send("coordinator",
       compound("reading", [atom("sensor_1"), atom("temperature"), num(99), num(1000)]));
@@ -382,7 +403,6 @@ describe("Estimator VPD computation", () => {
     const { nodes } = fullMesh();
     const est = nodes.estimator;
     est.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
-    est.reactive.bump();
 
     // Send temperature
     nodes.sensor_1.send("estimator",
@@ -403,7 +423,6 @@ describe("Estimator VPD computation", () => {
     const est = nodes.estimator;
     const coord = nodes.coordinator;
     est.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
-    est.reactive.bump();
 
     nodes.sensor_1.send("estimator",
       compound("reading", [atom("sensor_1"), atom("temperature"), num(25), num(1000)]));
@@ -419,7 +438,6 @@ describe("Estimator VPD computation", () => {
     const { nodes } = fullMesh();
     const est = nodes.estimator;
     est.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
-    est.reactive.bump();
 
     // First pair
     nodes.sensor_1.send("estimator",
@@ -443,30 +461,30 @@ describe("Estimator VPD computation", () => {
 
 describe("send/2 integration", () => {
   it("coordinator forwards estimate to gateway via send/2", () => {
-    const e = buildReactiveKB("coordinator", "coordinator");
+    const e = buildTestKB("coordinator", "coordinator");
     const fact = compound("estimate", [atom("vpd"), atom("s1"), num(80), num(100), num(1000)]);
-    const result = e.queryWithSends(compound("handle_signal", [atom("estimator"), fact]));
-    assert(result.result !== null, "should accept estimate");
+    const result = fireSignal(e, "estimator", fact);
+    assert(result.accepted, "should accept estimate");
     eq(result.sends.length, 1, "should have one send");
     eq(result.sends[0].target.name, "gateway");
     eq(result.sends[0].fact.functor, "estimate");
   });
 
   it("coordinator produces no sends for normal reading", () => {
-    const e = buildReactiveKB("coordinator", "coordinator");
+    const e = buildTestKB("coordinator", "coordinator");
     e.addClause(compound("node_status", [atom("s1"), atom("online")]));
     const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
-    const result = e.queryWithSends(compound("handle_signal", [atom("s1"), fact]));
-    assert(result.result !== null, "should accept reading");
+    const result = fireSignal(e, "s1", fact);
+    assert(result.accepted, "should accept reading");
     eq(result.sends.length, 0, "no sends for a normal reading");
   });
 
   it("coordinator auto-sends alert_notice to gateway on high reading", () => {
-    const e = buildReactiveKB("coordinator", "coordinator");
+    const e = buildTestKB("coordinator", "coordinator");
     e.addClause(compound("node_status", [atom("s1"), atom("online")]));
     const fact = compound("reading", [atom("s1"), atom("temperature"), num(50), num(1000)]);
-    const result = e.queryWithSends(compound("handle_signal", [atom("s1"), fact]));
-    assert(result.result !== null, "should accept reading");
+    const result = fireSignal(e, "s1", fact);
+    assert(result.accepted, "should accept reading");
     eq(result.sends.length, 1, "should send alert_notice");
     eq(result.sends[0].target.name, "gateway");
     eq(result.sends[0].fact.functor, "alert_notice");
@@ -474,19 +492,15 @@ describe("send/2 integration", () => {
   });
 
   it("estimator sends VPD estimate via send/2", () => {
-    const e = buildReactiveKB("estimator", "estimator");
+    const e = buildTestKB("estimator", "estimator");
     e.addClause(compound("node_status", [atom("s1"), atom("online")]));
     // Send temperature first
-    e.queryFirst(compound("handle_signal", [
-      atom("s1"),
-      compound("reading", [atom("s1"), atom("temperature"), num(25), num(1000)])
-    ]));
+    fireSignal(e, "s1",
+      compound("reading", [atom("s1"), atom("temperature"), num(25), num(1000)]));
     // Send humidity — should trigger VPD computation + send
-    const result = e.queryWithSends(compound("handle_signal", [
-      atom("s1"),
-      compound("reading", [atom("s1"), atom("humidity"), num(60), num(1001)])
-    ]));
-    assert(result.result !== null, "should accept humidity reading");
+    const result = fireSignal(e, "s1",
+      compound("reading", [atom("s1"), atom("humidity"), num(60), num(1001)]));
+    assert(result.accepted, "should accept humidity reading");
     eq(result.sends.length, 1, "should send VPD estimate");
     eq(result.sends[0].target.name, "coordinator");
     eq(result.sends[0].fact.functor, "estimate");
@@ -494,21 +508,19 @@ describe("send/2 integration", () => {
   });
 
   it("estimator produces no send with only temperature", () => {
-    const e = buildReactiveKB("estimator", "estimator");
+    const e = buildTestKB("estimator", "estimator");
     e.addClause(compound("node_status", [atom("s1"), atom("online")]));
-    const result = e.queryWithSends(compound("handle_signal", [
-      atom("s1"),
-      compound("reading", [atom("s1"), atom("temperature"), num(25), num(1000)])
-    ]));
-    assert(result.result !== null, "should accept reading");
+    const result = fireSignal(e, "s1",
+      compound("reading", [atom("s1"), atom("temperature"), num(25), num(1000)]));
+    assert(result.accepted, "should accept reading");
     eq(result.sends.length, 0, "no sends without both readings");
   });
 
   it("dropped signal produces no sends", () => {
-    const e = buildReactiveKB("coordinator", "coordinator");
+    const e = buildTestKB("coordinator", "coordinator");
     const fact = compound("reading", [atom("s1"), atom("temperature"), num(22), num(1000)]);
-    const result = e.queryWithSends(compound("handle_signal", [atom("s1"), fact]));
-    eq(result.result, null, "should reject (sensor not online)");
+    const result = fireSignal(e, "s1", fact);
+    eq(result.accepted, false, "should reject (sensor not online)");
     eq(result.sends.length, 0);
   });
 
@@ -520,9 +532,7 @@ describe("send/2 integration", () => {
 
     // Register sensor on both estimator and coordinator
     est.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
-    est.reactive.bump();
     coord.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
-    coord.reactive.bump();
 
     // Sensor sends readings to estimator
     nodes.sensor_1.send("estimator",
@@ -546,7 +556,6 @@ describe("Reactive integration", () => {
     const { nodes } = fullMesh();
     const coord = nodes.coordinator;
     coord.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
-    coord.reactive.bump();
 
     const alerts = coord.reactive.createQuery(() =>
       compound("alert", [variable("N"), variable("T"), variable("L")]));
@@ -562,7 +571,6 @@ describe("Reactive integration", () => {
     const { nodes } = fullMesh();
     const coord = nodes.coordinator;
     coord.engine.addClause(compound("node_status", [atom("sensor_1"), atom("online")]));
-    coord.reactive.bump();
 
     const status = coord.reactive.createQueryFirst(() =>
       compound("mesh_status", [variable("S")]));
@@ -645,7 +653,6 @@ describe("End-to-end scenario", () => {
     // Go offline (direct engine manipulation for test setup)
     coord.engine.retractFirst(compound("node_status", [atom("sensor_1"), variable("S")]));
     coord.engine.addClause(compound("node_status", [atom("sensor_1"), atom("offline")]));
-    coord.reactive.bump();
 
     // New reading rejected
     nodes.sensor_1.send("coordinator",

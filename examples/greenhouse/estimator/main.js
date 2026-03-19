@@ -13,7 +13,6 @@
 import dgram from "node:dgram";
 import { PrologEngine } from "../../../src/prolog-engine.js";
 import { loadString } from "../../../src/loader.js";
-import { createReactiveEngine } from "../../../src/reactive-prolog.js";
 import { serialize, deserialize } from "../../../src/sync.js";
 
 var atom     = PrologEngine.atom;
@@ -44,37 +43,32 @@ var coordinator = parseAddr(COORDINATOR_ADDR);
 var engine = new PrologEngine();
 
 var RULES = [
-  "handle_signal(From, Fact) :- ephemeral(signal(From, Fact)), react.",
-  "",
-  "react :- signal(From, reading(From, Type, Val, Ts)),",
-  "         node_role(estimator),",
-  "         node_status(From, online),",
-  "         retractall(reading(From, Type, A, B)),",
-  "         assert(reading(From, Type, Val, Ts)),",
-  "         try_vpd(From, Ts).",
+  "react({type: signal, from: From, fact: reading(From, Type, Val, Ts)}) :-",
+  "    node_role(estimator),",
+  "    node_status(From, online),",
+  "    retractall(reading(From, Type, _OldA, _OldB)),",
+  "    assert(reading(From, Type, Val, Ts)),",
+  "    try_vpd(From, Ts).",
   "",
   "try_vpd(Sensor, Ts) :-",
-  "    reading(Sensor, temperature, Temp, A),",
-  "    reading(Sensor, humidity, Hum, B),",
+  "    reading(Sensor, temperature, Temp, _TempTs),",
+  "    reading(Sensor, humidity, Hum, _HumTs),",
   "    compute_vpd(Temp, Hum, Vpd),",
-  "    retractall(estimate(vpd, Sensor, X, Y, Z)),",
+  "    retractall(estimate(vpd, Sensor, _OldX, _OldY, _OldZ)),",
   "    assert(estimate(vpd, Sensor, Vpd, 100, Ts)),",
   "    send(coordinator, estimate(vpd, Sensor, Vpd, 100, Ts)).",
-  "try_vpd(A, B).",
+  "try_vpd(_AnySensor, _AnyTs).",
   "",
-  "react :- signal(From, node_status(From, Status)),",
-  "         node_role(estimator),",
-  "         retractall(node_status(From, A)),",
-  "         assert(node_status(From, Status))."
+  "react({type: signal, from: From, fact: node_status(From, Status)}) :-",
+  "    node_role(estimator),",
+  "    retractall(node_status(From, _OldS)),",
+  "    assert(node_status(From, Status))."
 ].join("\n");
 
 loadString(engine, RULES);
 
 engine.addClause(compound("node_role", [atom("estimator")]));
 engine.addClause(compound("node_id",   [atom("estimator")]));
-
-// Register ephemeral/1 builtin
-createReactiveEngine(engine);
 
 // compute_vpd/3 — Magnus formula for vapor pressure deficit
 engine.builtins["compute_vpd/3"] = function(g, r, s, ctr, d, cb) {
@@ -112,11 +106,29 @@ sock.on("message", function(msg, rinfo) {
   var fact   = deserialize(payload.fact);
   if (!fact || !fromId) return;
 
-  var result = engine.queryWithSends(
-    compound("handle_signal", [atom(fromId), fact])
-  );
+  // Track whether react rules mutated the DB (= signal accepted)
+  var mutated = false;
+  var markDirty = function() { mutated = true; };
+  engine.onAssert.push(markDirty);
+  engine.onRetract.push(markDirty);
 
-  if (!result.result) {
+  // Fire ephemeral with QJSON object event, collect sends
+  engine._sends = [];
+  engine.queryFirst(compound("ephemeral", [
+    PrologEngine.object([
+      { key: "type", value: atom("signal") },
+      { key: "from", value: atom(fromId) },
+      { key: "fact", value: fact }
+    ])
+  ]));
+  var sends = engine._sends.slice();
+  engine._sends = [];
+
+  // Remove temporary mutation tracker
+  engine.onAssert.pop();
+  engine.onRetract.pop();
+
+  if (!mutated) {
     console.log("[estimator] dropped signal from " + fromId +
                 " (" + (fact.functor || fact.name || "?") + ")");
     return;
@@ -125,8 +137,8 @@ sock.on("message", function(msg, rinfo) {
   console.log("[estimator] accepted " + (fact.functor || fact.name) + " from " + fromId);
 
   // Dispatch all sends from Prolog react rules (e.g. VPD estimates)
-  for (var i = 0; i < result.sends.length; i++) {
-    var s = result.sends[i];
+  for (var i = 0; i < sends.length; i++) {
+    var s = sends[i];
     var targetName = s.target.name;
     var targetAddr = parseAddr(targetName === "coordinator" ? COORDINATOR_ADDR : targetName + ":9500");
     var buf = Buffer.from(JSON.stringify({

@@ -13,80 +13,77 @@ threshold(temperature, 5, 40).
 threshold(humidity, 20, 85).
 threshold(vpd, 40, 160).
 
-% ── Signal handling ──────────────────────────────────────
-handle_signal(From, Fact) :- ephemeral(signal(From, Fact)), react.
-
 % ── React rules ──────────────────────────────────────────
-% Pattern-match on signal/2 and upsert permanent facts.
-% Spoofing protection: signal(From, reading(From, ...)).
+% Pattern-match on QJSON object events via ephemeral/react.
+% Spoofing protection: From in object must match From in fact.
 
 % -- Coordinator --
-react :- signal(From, reading(From, Type, Val, Ts)),
-         node_role(coordinator),
-         node_status(From, online),
-         retractall(reading(From, Type, A, B)),
-         assert(reading(From, Type, Val, Ts)),
-         check_alerts(From, Type).
+react({type: signal, from: From, fact: reading(From, Type, Val, Ts)}) :-
+    node_role(coordinator),
+    node_status(From, online),
+    retractall(reading(From, Type, _OldA, _OldB)),
+    assert(reading(From, Type, Val, Ts)),
+    check_alerts(From, Type).
 
 check_alerts(Node, Type) :-
     alert(Node, Type, Level),
     send(gateway, alert_notice(Node, Type, Level)).
-check_alerts(A, B).
+check_alerts(_AnyNode, _AnyType).
 
-react :- signal(estimator, estimate(Type, Node, Val, Confidence, Ts)),
-         node_role(coordinator),
-         retractall(estimate(Type, Node, A, B, C)),
-         assert(estimate(Type, Node, Val, Confidence, Ts)),
-         send(gateway, estimate(Type, Node, Val, Confidence, Ts)).
+react({type: signal, from: estimator, fact: estimate(Type, Node, Val, Confidence, Ts)}) :-
+    node_role(coordinator),
+    retractall(estimate(Type, Node, _OldA, _OldB, _OldC)),
+    assert(estimate(Type, Node, Val, Confidence, Ts)),
+    send(gateway, estimate(Type, Node, Val, Confidence, Ts)).
 
-react :- signal(From, node_status(From, Status)),
-         node_role(coordinator),
-         retractall(node_status(From, A)),
-         assert(node_status(From, Status)).
+react({type: signal, from: From, fact: node_status(From, Status)}) :-
+    node_role(coordinator),
+    retractall(node_status(From, _OldS)),
+    assert(node_status(From, Status)).
 
 % -- Estimator --
-react :- signal(From, reading(From, Type, Val, Ts)),
-         node_role(estimator),
-         node_status(From, online),
-         retractall(reading(From, Type, A, B)),
-         assert(reading(From, Type, Val, Ts)),
-         try_vpd(From, Ts).
+react({type: signal, from: From, fact: reading(From, Type, Val, Ts)}) :-
+    node_role(estimator),
+    node_status(From, online),
+    retractall(reading(From, Type, _OldA, _OldB)),
+    assert(reading(From, Type, Val, Ts)),
+    try_vpd(From, Ts).
 
 try_vpd(Sensor, Ts) :-
-    reading(Sensor, temperature, Temp, A),
-    reading(Sensor, humidity, Hum, B),
+    reading(Sensor, temperature, Temp, _TempTs),
+    reading(Sensor, humidity, Hum, _HumTs),
     compute_vpd(Temp, Hum, Vpd),
-    retractall(estimate(vpd, Sensor, X, Y, Z)),
+    retractall(estimate(vpd, Sensor, _OldX, _OldY, _OldZ)),
     assert(estimate(vpd, Sensor, Vpd, 100, Ts)),
     send(coordinator, estimate(vpd, Sensor, Vpd, 100, Ts)).
-try_vpd(A, B).
+try_vpd(_AnySensor, _AnyTs).
 
-react :- signal(From, node_status(From, Status)),
-         node_role(estimator),
-         retractall(node_status(From, A)),
-         assert(node_status(From, Status)).
+react({type: signal, from: From, fact: node_status(From, Status)}) :-
+    node_role(estimator),
+    retractall(node_status(From, _OldS)),
+    assert(node_status(From, Status)).
 
 % -- Gateway --
-react :- signal(coordinator, estimate(Type, Node, Val, Confidence, Ts)),
-         node_role(gateway),
-         retractall(estimate(Type, Node, A, B, C)),
-         assert(estimate(Type, Node, Val, Confidence, Ts)).
+react({type: signal, from: coordinator, fact: estimate(Type, Node, Val, Confidence, Ts)}) :-
+    node_role(gateway),
+    retractall(estimate(Type, Node, _OldA, _OldB, _OldC)),
+    assert(estimate(Type, Node, Val, Confidence, Ts)).
 
-react :- signal(coordinator, alert_notice(Node, Type, Level)),
-         node_role(gateway),
-         retractall(alert_notice(Node, Type, A)),
-         assert(alert_notice(Node, Type, Level)).
+react({type: signal, from: coordinator, fact: alert_notice(Node, Type, Level)}) :-
+    node_role(gateway),
+    retractall(alert_notice(Node, Type, _OldL)),
+    assert(alert_notice(Node, Type, Level)).
 
 % -- Sensor --
-react :- signal(coordinator, calibration(Sensor, Type, Offset)),
-         node_role(sensor),
-         retractall(calibration(Sensor, Type, A)),
-         assert(calibration(Sensor, Type, Offset)).
+react({type: signal, from: coordinator, fact: calibration(Sensor, Type, Offset)}) :-
+    node_role(sensor),
+    retractall(calibration(Sensor, Type, _OldO)),
+    assert(calibration(Sensor, Type, Offset)).
 
-react :- signal(coordinator, threshold(Type, Min, Max)),
-         node_role(sensor),
-         retractall(threshold(Type, A, B)),
-         assert(threshold(Type, Min, Max)).
+react({type: signal, from: coordinator, fact: threshold(Type, Min, Max)}) :-
+    node_role(sensor),
+    retractall(threshold(Type, _OldA, _OldB)),
+    assert(threshold(Type, Min, Max)).
 
 % No catch-all — unmatched signals are dropped
 
