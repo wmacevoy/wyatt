@@ -6,57 +6,54 @@
 // retractall/1 removes all matches.
 //
 // Run:  node examples/tutorial/05-dynamic.js
+//       qjs --module examples/tutorial/05-dynamic.js
 // ============================================================
 
 import { PrologEngine } from "../../src/prolog-engine.js";
-
-var atom     = PrologEngine.atom;
-var compound = PrologEngine.compound;
-var num      = PrologEngine.num;
-var variable = PrologEngine.variable;
+import { loadString } from "../../src/loader.js";
+import { parseTerm } from "../../src/parser.js";
 
 var e = new PrologEngine();
 
-// Initial temperatures
-e.addClause(compound("temperature", [atom("kitchen"), num(72)]));
-e.addClause(compound("temperature", [atom("bedroom"), num(68)]));
+// ── Initial facts and rules ─────────────────────────────────
 
-// cold(Room) :- temperature(Room, T), T < 65.
-e.addClause(
-  compound("cold", [variable("Room")]),
-  [
-    compound("temperature", [variable("Room"), variable("T")]),
-    compound("<", [variable("T"), num(65)])
-  ]
-);
+loadString(e, `
+  temperature(kitchen, 72).
+  temperature(bedroom, 68).
+
+  cold(Room) :- temperature(Room, T), T < 65.
+`);
 
 // ── Dynamic updates ────────────────────────────────────────
 
 // Simulate a sensor update: bedroom drops to 58
 // First retract the old reading, then assert the new one.
-e.retractFirst(compound("temperature", [atom("bedroom"), variable("_")]));
-e.addClause(compound("temperature", [atom("bedroom"), num(58)]));
+e.queryFirst(parseTerm("retract(temperature(bedroom, _Old))"));
+e.queryFirst(parseTerm("assert(temperature(bedroom, 58))"));
 
-var coldNow = e.query(compound("cold", [variable("R")]));
+var coldNow = e.query(parseTerm("cold(R)"));
 // bedroom is now cold (58 < 65)
+
+// Dynamic (faster — skips parse, use for hot paths):
+//
+// var compound = PrologEngine.compound, atom = PrologEngine.atom;
+// var num = PrologEngine.num, variable = PrologEngine.variable;
+// e.retractFirst(compound("temperature", [atom("bedroom"), variable("_")]));
+// e.addClause(compound("temperature", [atom("bedroom"), num(58)]));
 
 // ── Using retractall from Prolog ────────────────────────────
 
-// do_update(Room, NewTemp) :-
-//   retractall(temperature(Room, _)),
-//   assert(temperature(Room, NewTemp)).
-e.addClause(
-  compound("do_update", [variable("Room"), variable("NewTemp")]),
-  [
-    compound("retractall", [compound("temperature", [variable("Room"), variable("_")])]),
-    compound("assert", [compound("temperature", [variable("Room"), variable("NewTemp")])])
-  ]
-);
+// A rule that replaces a temperature reading in one step
+loadString(e, `
+  do_update(Room, NewTemp) :-
+    retractall(temperature(Room, _OldVal)),
+    assert(temperature(Room, NewTemp)).
+`);
 
 // Update kitchen to 60 via the Prolog rule
-e.queryFirst(compound("do_update", [atom("kitchen"), num(60)]));
+e.queryFirst(parseTerm("do_update(kitchen, 60)"));
 
-var coldAfter = e.query(compound("cold", [variable("R")]));
+var coldAfter = e.query(parseTerm("cold(R)"));
 // Both bedroom (58) and kitchen (60) are cold now
 
 var _print = (typeof print !== "undefined") ? print : console.log.bind(console);

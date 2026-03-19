@@ -6,56 +6,57 @@
 // X is Y + Z.
 //
 // Run:  node examples/tutorial/03-arithmetic.js
+//       qjs --module examples/tutorial/03-arithmetic.js
 // ============================================================
 
 import { PrologEngine } from "../../src/prolog-engine.js";
-
-var atom     = PrologEngine.atom;
-var compound = PrologEngine.compound;
-var num      = PrologEngine.num;
-var variable = PrologEngine.variable;
+import { loadString } from "../../src/loader.js";
+import { parseTerm } from "../../src/parser.js";
 
 var e = new PrologEngine();
 
-// Facts
-e.addClause(compound("temperature", [atom("kitchen"), num(72)]));
-e.addClause(compound("temperature", [atom("bedroom"), num(68)]));
-e.addClause(compound("temperature", [atom("garage"), num(55)]));
-e.addClause(compound("target_temp", [atom("kitchen"), num(70)]));
-e.addClause(compound("target_temp", [atom("bedroom"), num(72)]));
-e.addClause(compound("target_temp", [atom("garage"), num(50)]));
+// ── Facts ───────────────────────────────────────────────────
+
+loadString(e, `
+  temperature(kitchen, 72).
+  temperature(bedroom, 68).
+  temperature(garage, 55).
+  target_temp(kitchen, 70).
+  target_temp(bedroom, 72).
+  target_temp(garage, 50).
+`);
 
 // ── Rules with arithmetic ───────────────────────────────────
 
-// temp_diff(Room, Diff) :- temperature(Room, T), target_temp(Room, Target),
-//                          Diff is Target - T.
-e.addClause(
-  compound("temp_diff", [variable("Room"), variable("Diff")]),
-  [
-    compound("temperature", [variable("Room"), variable("T")]),
-    compound("target_temp", [variable("Room"), variable("Target")]),
-    compound("is", [variable("Diff"), compound("-", [variable("Target"), variable("T")])])
-  ]
-);
+loadString(e, `
+  temp_diff(Room, Diff) :-
+    temperature(Room, T),
+    target_temp(Room, Target),
+    Diff is Target - T.
 
-// comfortable(Room) :- temperature(Room, T), target_temp(Room, Target),
-//                      T >= Target, T =< Target + 5.
-e.addClause(
-  compound("comfortable", [variable("Room")]),
-  [
-    compound("temperature", [variable("Room"), variable("T")]),
-    compound("target_temp", [variable("Room"), variable("Target")]),
-    compound(">=", [variable("T"), variable("Target")]),
-    compound("=<", [variable("T"), compound("+", [variable("Target"), num(5)])])
-  ]
-);
+  comfortable(Room) :-
+    temperature(Room, T),
+    target_temp(Room, Target),
+    T >= Target,
+    T =< Target + 5.
+`);
+
+// Dynamic (faster — skips parse, use for hot paths):
+//
+// var compound = PrologEngine.compound, variable = PrologEngine.variable, num = PrologEngine.num;
+// e.addClause(
+//   compound("temp_diff", [variable("Room"), variable("Diff")]),
+//   [compound("temperature", [variable("Room"), variable("T")]),
+//    compound("target_temp", [variable("Room"), variable("Target")]),
+//    compound("is", [variable("Diff"), compound("-", [variable("Target"), variable("T")])])]
+// );
 
 // ── Queries ─────────────────────────────────────────────────
 
-var diffs = e.query(compound("temp_diff", [variable("R"), variable("D")]));
+var diffs = e.query(parseTerm("temp_diff(R, D)"));
 // kitchen: 70-72 = -2, bedroom: 72-68 = 4, garage: 50-55 = -5
 
-var comfy = e.query(compound("comfortable", [variable("R")]));
+var comfy = e.query(parseTerm("comfortable(R)"));
 // kitchen: 72 >= 70 and 72 =< 75 → yes
 
 var _print = (typeof print !== "undefined") ? print : console.log.bind(console);

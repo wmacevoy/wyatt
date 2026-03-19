@@ -5,68 +5,66 @@
 // findall/3 collects all solutions into a list.
 //
 // Run:  node examples/tutorial/06-negation-findall.js
+//       qjs --module examples/tutorial/06-negation-findall.js
 // ============================================================
 
 import { PrologEngine, listToArray } from "../../src/prolog-engine.js";
-
-var atom     = PrologEngine.atom;
-var compound = PrologEngine.compound;
-var num      = PrologEngine.num;
-var variable = PrologEngine.variable;
+import { loadString } from "../../src/loader.js";
+import { parseTerm } from "../../src/parser.js";
 
 var e = new PrologEngine();
 
-// Facts
-e.addClause(compound("room", [atom("kitchen")]));
-e.addClause(compound("room", [atom("bedroom")]));
-e.addClause(compound("room", [atom("garage")]));
-e.addClause(compound("temperature", [atom("kitchen"), num(72)]));
-e.addClause(compound("temperature", [atom("bedroom"), num(58)]));
-e.addClause(compound("temperature", [atom("garage"), num(55)]));
-e.addClause(compound("target_temp", [atom("kitchen"), num(70)]));
-e.addClause(compound("target_temp", [atom("bedroom"), num(72)]));
-e.addClause(compound("target_temp", [atom("garage"), num(50)]));
+// ── Facts ───────────────────────────────────────────────────
 
-// comfortable(Room) :- temperature(Room, T), target_temp(Room, Target),
-//                      T >= Target.
-e.addClause(
-  compound("comfortable", [variable("Room")]),
-  [
-    compound("temperature", [variable("Room"), variable("T")]),
-    compound("target_temp", [variable("Room"), variable("Target")]),
-    compound(">=", [variable("T"), variable("Target")])
-  ]
-);
+loadString(e, `
+  room(kitchen).
+  room(bedroom).
+  room(garage).
+  temperature(kitchen, 72).
+  temperature(bedroom, 58).
+  temperature(garage, 55).
+  target_temp(kitchen, 70).
+  target_temp(bedroom, 72).
+  target_temp(garage, 50).
+`);
+
+// ── Rules ───────────────────────────────────────────────────
+
+loadString(e, `
+  comfortable(Room) :-
+    temperature(Room, T),
+    target_temp(Room, Target),
+    T >= Target.
+`);
+
+// Dynamic (faster — skips parse, use for hot paths):
+//
+// var compound = PrologEngine.compound, variable = PrologEngine.variable;
+// e.addClause(
+//   compound("comfortable", [variable("Room")]),
+//   [compound("temperature", [variable("Room"), variable("T")]),
+//    compound("target_temp", [variable("Room"), variable("Target")]),
+//    compound(">=", [variable("T"), variable("Target")])]
+// );
 
 // ── Negation ────────────────────────────────────────────────
 
 // uncomfortable(Room) :- room(Room), not(comfortable(Room)).
-e.addClause(
-  compound("uncomfortable", [variable("Room")]),
-  [
-    compound("room", [variable("Room")]),
-    compound("not", [compound("comfortable", [variable("Room")])])
-  ]
-);
+loadString(e, `
+  uncomfortable(Room) :- room(Room), not(comfortable(Room)).
+`);
 
-var uncomfortable = e.query(compound("uncomfortable", [variable("R")]));
+var uncomfortable = e.query(parseTerm("uncomfortable(R)"));
 // bedroom (58 < 72)
 
 // ── Findall ─────────────────────────────────────────────────
 
 // all_uncomfortable(Rooms) :- findall(R, uncomfortable(R), Rooms).
-e.addClause(
-  compound("all_uncomfortable", [variable("Rooms")]),
-  [
-    compound("findall", [
-      variable("R"),
-      compound("uncomfortable", [variable("R")]),
-      variable("Rooms")
-    ])
-  ]
-);
+loadString(e, `
+  all_uncomfortable(Rooms) :- findall(R, uncomfortable(R), Rooms).
+`);
 
-var result = e.queryFirst(compound("all_uncomfortable", [variable("L")]));
+var result = e.queryFirst(parseTerm("all_uncomfortable(L)"));
 var roomList = listToArray(result.args[0]);
 
 var _print = (typeof print !== "undefined") ? print : console.log.bind(console);
