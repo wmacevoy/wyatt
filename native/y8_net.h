@@ -1,0 +1,57 @@
+/* ============================================================
+ * y8_net.h — QJSON wire framing + transport
+ *
+ * Length-prefixed QJSON messages over any stream (TCP, TLS,
+ * pipe, Unix socket).  Zero dependencies for framing + pipe.
+ * LibreSSL optional for TCP/TLS and UDP/DTLS.
+ *
+ *   int fd = y8_pipe_open(read_fd, write_fd);
+ *   y8_frame_write(fd, qjson, len);
+ *   y8_frame_read(fd, &buf, &len);  // caller frees buf
+ *
+ * Wire format: [4-byte big-endian length][QJSON payload]
+ * Length 0 = keepalive ping.  Max 16 MB.
+ * ============================================================ */
+
+#ifndef Y8_NET_H
+#define Y8_NET_H
+
+#include <stdint.h>
+
+/* ── Framing (over raw file descriptors) ─────────────── */
+
+#define Y8_NET_MAX_MSG  (16 * 1024 * 1024)  /* 16 MB */
+#define Y8_NET_PING_SEC 30
+#define Y8_NET_DEAD_SEC 60
+
+/* Write a length-prefixed frame.
+   Returns 0 on success, -1 on error. */
+int y8_frame_write(int fd, const char *data, int len);
+
+/* Read a length-prefixed frame.  Allocates *data (caller frees).
+   Returns payload length (>0), 0 for keepalive, -1 on error/EOF. */
+int y8_frame_read(int fd, char **data, int *len);
+
+/* Send keepalive ping (zero-length frame). */
+int y8_frame_ping(int fd);
+
+/* ── Pipe transport ──────────────────────────────────── */
+
+typedef struct {
+    int read_fd;
+    int write_fd;
+} y8_pipe;
+
+/* Open a pipe transport over existing file descriptors.
+   For stdin/stdout: y8_pipe_open(STDIN_FILENO, STDOUT_FILENO)
+   For socketpair: use both fds from socketpair(). */
+void y8_pipe_init(y8_pipe *p, int read_fd, int write_fd);
+
+/* Send/recv over pipe (length-prefixed frames). */
+int y8_pipe_send(y8_pipe *p, const char *data, int len);
+int y8_pipe_recv(y8_pipe *p, char **data, int *len);
+
+/* Close both fds. */
+void y8_pipe_close(y8_pipe *p);
+
+#endif /* Y8_NET_H */
