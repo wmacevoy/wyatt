@@ -274,7 +274,7 @@
 
 <script type="module">
 // ── Imports ──
-import { PrologEngine, listToArray } from "../../src/prolog-engine.js";
+import { PrologEngine, listToArray } from "../../release/y8-bundle.js";
 import { buildTicTacToeKB, boardToProlog, TICTACTOE_PROLOG_SOURCE } from "./tictactoe-kb.js";
 
 const a = PrologEngine.atom, v = PrologEngine.variable, c = PrologEngine.compound, n = PrologEngine.num;
@@ -295,6 +295,26 @@ function App() {
   const playerSymbol = "x";
   let engine = buildTicTacToeKB();
   let logEnd;
+
+  // ── Persist win/loss stats to localStorage ──────────
+  function loadStats() {
+    try { return JSON.parse(localStorage.getItem("y8_ttt_stats")) || {wins:0,losses:0,draws:0}; }
+    catch(e) { return {wins:0,losses:0,draws:0}; }
+  }
+  const [stats, setStats] = createSignal(loadStats());
+  function recordOutcome(outcome) {
+    var s = loadStats();
+    if (outcome === "won") s.wins++;
+    else if (outcome === "lost") s.losses++;
+    else if (outcome === "draw") s.draws++;
+    localStorage.setItem("y8_ttt_stats", JSON.stringify(s));
+    setStats({...s});
+  }
+  // Track outcomes reactively
+  createEffect(() => {
+    var s = status();
+    if (s === "won" || s === "lost" || s === "draw") recordOutcome(s);
+  });
 
   const addLog = (msg) => setLog(prev => [...prev.slice(-30), msg]);
 

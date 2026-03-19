@@ -6,8 +6,7 @@
 // the previous manual compound/atom/variable constructor calls.
 // ============================================================
 
-import { PrologEngine } from "../../src/prolog-engine.js";
-import { loadString } from "../../src/loader.js";
+import { PrologEngine, parseProgram } from "../../release/y8-bundle.js";
 
 const TICTACTOE_RULES = `
 % ── Winning lines ────────────────────────────────────────
@@ -76,6 +75,12 @@ opponent(o, x).
 `;
 
 export const TICTACTOE_PROLOG_SOURCE = TICTACTOE_RULES;
+
+function loadString(engine, text) {
+  var clauses = parseProgram(text);
+  for (var i = 0; i < clauses.length; i++) engine.addClause(clauses[i].head, clauses[i].body);
+  return clauses.length;
+}
 
 export function buildTicTacToeKB() {
   const engine = new PrologEngine();
