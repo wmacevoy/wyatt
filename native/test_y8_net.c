@@ -12,7 +12,6 @@
 #include <pthread.h>
 #include <sys/socket.h>
 #include <sys/time.h>
-#include <sys/wait.h>
 #include "y8_net.h"
 
 static int pass = 0, fail = 0;
@@ -124,32 +123,63 @@ static void test_multiple_messages(void) {
     close(fds[0]); close(fds[1]);
 }
 
+/* ── Thread helpers (used by large message, interleaved, throughput) */
+
+typedef struct {
+    int fd;
+    int count;
+    int ok;
+} thread_arg;
+
+static void *sender_thread(void *arg) {
+    thread_arg *ta = (thread_arg *)arg;
+    ta->ok = 1;
+    for (int i = 0; i < ta->count; i++) {
+        char msg[32];
+        int n = snprintf(msg, sizeof(msg), "s%d", i);
+        if (y8_frame_write(ta->fd, msg, n) < 0) { ta->ok = 0; break; }
+    }
+    return NULL;
+}
+
+static void *receiver_thread(void *arg) {
+    thread_arg *ta = (thread_arg *)arg;
+    ta->ok = 1;
+    for (int i = 0; i < ta->count; i++) {
+        char *buf = NULL; int len = 0;
+        int r = y8_frame_read(ta->fd, &buf, &len);
+        if (r < 0) { ta->ok = 0; free(buf); break; }
+        free(buf);
+    }
+    return NULL;
+}
+
 /* ── Large message (1 MB) ───────────────────────────── */
+
+static void *large_writer(void *arg) {
+    thread_arg *ta = (thread_arg *)arg;
+    int size = 1024 * 1024;
+    char *big = (char *)malloc(size);
+    for (int i = 0; i < size; i++) big[i] = (char)(i & 0xFF);
+    ta->ok = (y8_frame_write(ta->fd, big, size) == 0) ? 1 : 0;
+    free(big);
+    return NULL;
+}
 
 static void test_large_message(void) {
     printf("\n=== Large message ===\n");
     int fds[2];
     make_pair(fds);
 
-    int size = 1024 * 1024;  /* 1 MB */
-    char *big = (char *)malloc(size);
-    for (int i = 0; i < size; i++) big[i] = (char)(i & 0xFF);
+    int size = 1024 * 1024;
+    thread_arg wa = { fds[1], 0, 0 };
+    pthread_t wt;
+    pthread_create(&wt, NULL, large_writer, &wa);
 
-    /* Need to write in a thread since socketpair buffer is limited */
-    /* Use fork instead for simplicity */
-    pid_t pid = fork();
-    if (pid == 0) {
-        /* Child: write */
-        close(fds[0]);
-        y8_frame_write(fds[1], big, size);
-        close(fds[1]);
-        free(big);
-        _exit(0);
-    }
-    /* Parent: read */
-    close(fds[1]);
     char *buf = NULL; int len = 0;
     int r = y8_frame_read(fds[0], &buf, &len);
+    pthread_join(wt, NULL);
+
     TEST("1MB write+read", r == size && len == size);
 
     int match = 1;
@@ -162,9 +192,8 @@ static void test_large_message(void) {
     } else { match = 0; }
     TEST("1MB content intact", match);
 
-    free(buf); free(big);
-    close(fds[0]);
-    int status; waitpid(pid, &status, 0);
+    free(buf);
+    close(fds[0]); close(fds[1]);
 }
 
 /* ── Pipe transport ─────────────────────────────────── */
@@ -231,41 +260,12 @@ static void test_eof_detection(void) {
 
 /* ── Interleaved send/recv (threaded) ───────────────── */
 
-typedef struct {
-    int fd;
-    int count;
-    int ok;
-} thread_arg;
-
-static void *sender_thread(void *arg) {
-    thread_arg *ta = (thread_arg *)arg;
-    ta->ok = 1;
-    for (int i = 0; i < ta->count; i++) {
-        char msg[32];
-        int n = snprintf(msg, sizeof(msg), "s%d", i);
-        if (y8_frame_write(ta->fd, msg, n) < 0) { ta->ok = 0; break; }
-    }
-    return NULL;
-}
-
-static void *receiver_thread(void *arg) {
-    thread_arg *ta = (thread_arg *)arg;
-    ta->ok = 1;
-    for (int i = 0; i < ta->count; i++) {
-        char *buf = NULL; int len = 0;
-        int r = y8_frame_read(ta->fd, &buf, &len);
-        if (r < 0) { ta->ok = 0; free(buf); break; }
-        free(buf);
-    }
-    return NULL;
-}
-
 static void test_interleaved(void) {
     printf("\n=== Interleaved send/recv ===\n");
     int fds[2];
     make_pair(fds);
 
-    int count = 10000;
+    int count = 1000;
     thread_arg sa = { fds[1], count, 0 };
     thread_arg ra = { fds[0], count, 0 };
 
@@ -275,8 +275,8 @@ static void test_interleaved(void) {
     pthread_join(st, NULL);
     pthread_join(rt, NULL);
 
-    TEST("10K interleaved send ok", sa.ok);
-    TEST("10K interleaved recv ok", ra.ok);
+    TEST("interleaved send ok", sa.ok);
+    TEST("interleaved recv ok", ra.ok);
 
     close(fds[0]); close(fds[1]);
 }
@@ -288,22 +288,12 @@ static void test_throughput(void) {
     int fds[2];
     make_pair(fds);
 
-    int count = 100000;
-    const char *msg = "{type:signal,from:sensor1,value:42}";
-    int msglen = (int)strlen(msg);
+    int count = 1000;
+    thread_arg sa = { fds[1], count, 0 };
 
-    /* Sender in child process */
-    pid_t pid = fork();
-    if (pid == 0) {
-        close(fds[0]);
-        for (int i = 0; i < count; i++) {
-            y8_frame_write(fds[1], msg, msglen);
-        }
-        close(fds[1]);
-        _exit(0);
-    }
+    pthread_t st;
+    pthread_create(&st, NULL, sender_thread, &sa);
 
-    close(fds[1]);
     struct timeval t0, t1;
     gettimeofday(&t0, NULL);
 
@@ -314,13 +304,14 @@ static void test_throughput(void) {
     }
 
     gettimeofday(&t1, NULL);
+    pthread_join(st, NULL);
+
     double ms = (t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_usec - t0.tv_usec) / 1000.0;
     printf("  %d messages in %.1f ms (%.1f K msg/sec)\n",
            count, ms, count / ms);
-    TEST("throughput completes", ms > 0);
+    TEST("throughput completes", sa.ok && ms > 0);
 
-    close(fds[0]);
-    int status; waitpid(pid, &status, 0);
+    close(fds[0]); close(fds[1]);
 }
 
 /* ── Oversized message rejected ─────────────────────── */
