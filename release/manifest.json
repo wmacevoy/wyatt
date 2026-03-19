@@ -1,0 +1,10 @@
+{
+  "version": "dev",
+  "artifacts": {
+    "liby8_core-darwin-arm64.dylib": {
+      "url": "https://github.com/wmacevoy/wyatt/releases/download/vdev/liby8_core-darwin-arm64.dylib",
+      "sha256": "3fe360c95039ab2f81b1d407e831b092d50268f23fe5f9658e59bc07f6c69e54",
+      "size": 142784
+    }
+  }
+}
