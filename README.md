@@ -60,15 +60,16 @@ Objects unify by key intersection — `{user: Name}` matches
 │  native hooks (persist, crypto, I/O)     │
 │  send/collect (outgoing messages)        │
 ├──────────────────────────────────────────┤
-│  y8-prolog engine (~300 lines)           │
+│  y8-prolog engine          │
 │  ephemeral → react (pattern dispatch)    │
 │  QJSON objects as first-class terms      │
 ├──────────────────────────────────────────┤
-│  QSQL: [lo, str, hi] interval projection│
 │  QJSON: N/M/L numerics + 0j blobs       │
 ├──────────────────────────────────────────┤
-│  SQLite / SQLCipher (encrypted at rest)  │
-│  WASM SQLite (browser)                   │
+│  QSQL: Fast exact representation│ Pipe, UDP, TCP, WebSocket |
+├──────────────────────────────────────────┤
+│  Postgress / SQLCipher (encrypted at rest)  │
+│                                          │
 └──────────────────────────────────────────┘
 ```
 
@@ -147,7 +148,7 @@ src/
 
   persist.js / persist.py  SQLite/PG persistence
   persist-sqlite / pg      Adapter trio (sqlite, sqlcipher, pg)
-  persist-wasm.js          WASM SQLite → persist adapter
+  persist-wasm.js          WASM SQLCipher → persist adapter (oo1 API)
   fossilize.js / .py       fossilize (global) + mineralize (selective)
 
   reactive.js / .py        Signals/memos/effects (optional sugar)
@@ -165,9 +166,9 @@ native/
 
 wasm/
   Dockerfile               Emscripten build container
-  wyatt_wasm.c             C helpers for SQLite WASM
-  shim.js                  better-sqlite3-compatible wrapper
-  build.sh                 → wasm/dist/sqlite3.{js,wasm}
+  wyatt_wasm.c             C helpers for SQLCipher WASM
+  shim.js                  sqlite3 oo1 API wrapper (DB, Stmt, exec, prepare)
+  build.sh                 → wasm/dist/sqlcipher.{js,wasm}
 
 test.sh                    Runs everything
 ```
@@ -243,17 +244,42 @@ y8_close(w);
 Full stack in one binary: QuickJS + SQLite + parser + reactive +
 persist + QJSON + fossilize.  Text in, text out.
 
-### WASM SQLite for the browser
+### WASM SQLCipher for the browser
 
-```bash
-docker compose run --rm wasm-build
-# → wasm/dist/sqlite3.js + sqlite3.wasm
+SQLCipher WASM with LibreSSL crypto.  The JS shim matches the
+official [sqlite3 oo1 API](https://sqlite.org/wasm/doc/trunk/api-oo1.md) —
+same interface, encrypted underneath.
+
+```javascript
+var Module = await initSqlcipher();
+var db = new DB(Module, {filename: ":memory:", key: "secret"});
+
+db.exec("CREATE TABLE t (a TEXT, b REAL)");
+db.exec({sql: "INSERT INTO t VALUES (?,?)", bind: ["x", 42]});
+db.selectObjects("SELECT * FROM t");  // [{a:"x", b:42}]
+
+db.transaction(function(db) {
+  db.exec({sql: "INSERT INTO t VALUES (?,?)", bind: ["y", 99]});
+});
+
+var stmt = db.prepare("SELECT * FROM t WHERE b > ?");
+stmt.bind([10]);
+while (stmt.step()) console.log(stmt.get({}));
+stmt.finalize();
+
+db.close();
 ```
 
 ```javascript
-var db = await createWasmDb("sqlite3.wasm");
+// With persist + QSQL interval projection
+var db = await createWasmDb("sqlcipher.wasm", "secret");
 persist(engine, qsqlAdapter(db));
-// ACID transactions in the browser.  Interval arithmetic.
+// Encrypted ACID transactions in the browser.  Exact numerics.
+```
+
+Built via CI (`.github/workflows/wasm-sqlcipher.yml`) or Docker:
+```bash
+docker compose run --rm wasm-build
 ```
 
 ### fossilize + mineralize

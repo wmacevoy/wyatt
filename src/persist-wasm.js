@@ -1,19 +1,19 @@
 // ============================================================
-// persist-wasm.js — Bridge between WASM SQLite and persist
+// persist-wasm.js — Bridge between SQLCipher WASM and persist
 //
-// Loads SQLite WASM, creates a WasmDatabase, returns a
-// better-sqlite3-compatible object that qsqlAdapter/persist
-// can use directly.
+// Loads SQLCipher WASM, creates a DB (oo1-compatible), returns
+// an object that qsqlAdapter/persist can use directly.
 //
 // Usage (browser):
-//   var db = await createWasmDb("sqlite3.wasm");
+//   var db = await createWasmDb("sqlcipher.wasm");
 //   persist(engine, qsqlAdapter(db));
 //
-// Usage (encrypted, when SQLCipher WASM is available):
+// Usage (encrypted):
 //   var db = await createWasmDb("sqlcipher.wasm", "secret");
 //
-// The returned db has: .exec(sql), .prepare(sql), .close()
-// Same API as better-sqlite3.  Drop-in for all persist adapters.
+// The returned db matches the sqlite3 oo1 API:
+//   db.exec(sql), db.prepare(sql), db.selectObjects(sql),
+//   db.transaction(fn), db.close()
 //
 // This file uses async/await — it runs in the browser or Node 18+,
 // NOT in QuickJS/Duktape (they don't have WASM).
@@ -21,28 +21,48 @@
 
 async function createWasmDb(wasmUrl, encryptionKey) {
   // Load the Emscripten module
-  // initSqlite is the MODULARIZE'd factory from the WASM build
-  var Module;
-  if (typeof initSqlite === "function") {
-    // Global (loaded via <script>)
-    Module = await initSqlite({
-      locateFile: function() { return wasmUrl || "sqlite3.wasm"; }
-    });
-  } else {
-    throw new Error("initSqlite not found — load sqlite3.js first");
+  // initSqlcipher (encrypted) or initSqlite (plain) from the WASM build
+  var Module, init;
+  if (typeof initSqlcipher === "function") init = initSqlcipher;
+  else if (typeof initSqlite === "function") init = initSqlite;
+  else throw new Error("initSqlcipher/initSqlite not found — load the WASM JS first");
+
+  Module = await init({
+    locateFile: function() { return wasmUrl || "sqlcipher.wasm"; }
+  });
+
+  // DB is appended to the WASM glue by shim.js
+  if (typeof DB !== "function") {
+    throw new Error("DB not found — load shim.js after the WASM JS");
   }
 
-  // WasmDatabase is appended to the WASM glue by shim.js
-  if (typeof WasmDatabase !== "function") {
-    throw new Error("WasmDatabase not found — load shim.js first");
-  }
+  var opts = {filename: ":memory:"};
+  if (encryptionKey) opts.key = encryptionKey;
 
-  var db = new WasmDatabase(Module);
+  var db = new DB(Module, opts);
 
-  // Set encryption key if provided (SQLCipher)
-  if (encryptionKey) {
-    db.pragma("key = '" + encryptionKey + "'");
-  }
+  // better-sqlite3 compat shim for persist adapters that use
+  // db.prepare(sql).run(...) / db.prepare(sql).all(...)
+  var _origPrepare = db.prepare;
+  db.prepare = function(sql) {
+    var stmt = _origPrepare.call(db, sql);
+    // Add better-sqlite3-style .run() and .all()
+    stmt.run = function() {
+      var args = Array.prototype.slice.call(arguments);
+      if (args.length) stmt.bind(args);
+      while (stmt.step()) {}
+      stmt.reset();
+    };
+    stmt.all = function() {
+      var args = Array.prototype.slice.call(arguments);
+      if (args.length) stmt.bind(args);
+      var rows = [];
+      while (stmt.step()) rows.push(stmt.get({}));
+      stmt.reset();
+      return rows;
+    };
+    return stmt;
+  };
 
   return db;
 }
