@@ -1,6 +1,6 @@
 [submodule "vendor/sqlcipher"]
 	path = vendor/sqlcipher
-	url = git@github.com:sqlcipher/sqlcipher.git
+	url = git@github.com:wmacevoy/sqlcipher-libressl.git
 [submodule "vendor/libressl"]
 	path = vendor/libressl
 	url = git@github.com:libressl/portable.git

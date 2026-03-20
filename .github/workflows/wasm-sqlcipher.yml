@@ -6,6 +6,7 @@ on:
     paths:
       - 'wasm/**'
       - 'vendor/sqlcipher'
+      - 'vendor/libressl'
       - '.github/workflows/wasm-sqlcipher.yml'
   workflow_dispatch:
 
@@ -20,43 +21,68 @@ jobs:
       - name: Install build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y tcl libssl-dev
+          sudo apt-get install -y tcl cmake automake autoconf libtool
 
-      - name: Build SQLCipher amalgamation
+      - name: Build LibreSSL (static, for SQLCipher crypto)
+        run: |
+          cd vendor/libressl
+          ./autogen.sh
+          mkdir -p build && cd build
+          cmake .. -DCMAKE_INSTALL_PREFIX=$HOME/libressl \
+            -DLIBRESSL_APPS=OFF -DLIBRESSL_TESTS=OFF -DBUILD_SHARED_LIBS=OFF
+          make -j$(nproc)
+          make install
+          echo "=== LibreSSL ==="
+          ls $HOME/libressl/lib/libssl.a $HOME/libressl/lib/libcrypto.a
+
+      - name: Build SQLCipher amalgamation (with LibreSSL)
         run: |
           cd vendor/sqlcipher
           ./configure --with-tempstore=yes \
-            CFLAGS="-DSQLITE_HAS_CODEC -DSQLCIPHER_CRYPTO_OPENSSL" \
-            LDFLAGS="-lssl -lcrypto"
+            CFLAGS="-DSQLITE_HAS_CODEC -DSQLCIPHER_CRYPTO_OPENSSL -I$HOME/libressl/include" \
+            LDFLAGS="-L$HOME/libressl/lib -lssl -lcrypto"
           make sqlite3.c
           echo "=== Amalgamation ==="
           ls -lh sqlite3.c sqlite3.h
-          head -5 sqlite3.c
 
       - name: Install Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
           version: 3.1.74
 
+      # Build LibreSSL again with emcc (for WASM linking)
+      - name: Build LibreSSL for WASM
+        run: |
+          cd vendor/libressl/build
+          emcmake cmake .. -DCMAKE_INSTALL_PREFIX=$HOME/libressl-wasm \
+            -DLIBRESSL_APPS=OFF -DLIBRESSL_TESTS=OFF -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_C_FLAGS="-DHAVE_TIMEGM -D__STDC_NO_ATOMICS__"
+          emmake make -j$(nproc) crypto
+          mkdir -p $HOME/libressl-wasm/lib
+          cp crypto/libcrypto.a $HOME/libressl-wasm/lib/
+          echo "=== LibreSSL WASM ==="
+          ls -lh $HOME/libressl-wasm/lib/
+
       - name: Compile SQLCipher to WASM
         run: |
-          mkdir -p wasm/build
-          cp vendor/sqlcipher/sqlite3.c wasm/build/
-          cp vendor/sqlcipher/sqlite3.h wasm/build/
-          cp wasm/wyatt_wasm.c wasm/build/
+          mkdir -p wasm/dist
+          cp vendor/sqlcipher/sqlite3.c wasm/dist/
+          cp vendor/sqlcipher/sqlite3.h wasm/dist/
+          cp wasm/wyatt_wasm.c wasm/dist/
 
-          cat >> wasm/build/wyatt_wasm.c <<'KEYEOF'
+          cat >> wasm/dist/wyatt_wasm.c <<'EOF'
           int wasm_db_key(sqlite3 *db, const char *key, int key_len) {
               return sqlite3_key(db, key, key_len);
           }
-          KEYEOF
+          EOF
 
           EXPORTED='["_wasm_db_open","_wasm_db_close","_wasm_db_exec","_wasm_db_errmsg","_wasm_db_key","_wasm_db_prepare","_wasm_stmt_finalize","_wasm_stmt_reset","_wasm_stmt_step","_wasm_stmt_run","_wasm_stmt_bind_text","_wasm_stmt_bind_int","_wasm_stmt_bind_double","_wasm_stmt_bind_null","_wasm_stmt_columns","_wasm_stmt_colname","_wasm_stmt_coltype","_wasm_stmt_int","_wasm_stmt_double","_wasm_stmt_text","_malloc","_free"]'
           RUNTIME='["cwrap","UTF8ToString","stringToUTF8","lengthBytesUTF8"]'
 
-          cd wasm/build
+          cd wasm/dist
           emcc wyatt_wasm.c \
-            -I. \
+            -I. -I$HOME/libressl/include \
+            -L$HOME/libressl-wasm/lib \
             -O2 \
             -DSQLITE_HAS_CODEC \
             -DSQLCIPHER_CRYPTO_OPENSSL \
@@ -76,8 +102,10 @@ jobs:
             -s EXPORT_NAME="initSqlcipher" \
             -s ENVIRONMENT='web,worker,node' \
             -s FILESYSTEM=0 \
+            -lcrypto \
             -o sqlcipher.js
 
+          rm -f sqlite3.c sqlite3.h wyatt_wasm.c
           echo "=== Output ==="
           ls -lh sqlcipher.js sqlcipher.wasm
 
@@ -86,6 +114,7 @@ jobs:
         with:
           name: sqlcipher-wasm
           path: |
-            wasm/build/sqlcipher.js
-            wasm/build/sqlcipher.wasm
+            wasm/dist/sqlcipher.js
+            wasm/dist/sqlcipher.wasm
+            wasm/shim.js
           retention-days: 90
