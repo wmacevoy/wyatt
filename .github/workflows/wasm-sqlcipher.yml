@@ -72,6 +72,8 @@ jobs:
             -O2 \
             -DSQLITE_HAS_CODEC \
             -DSQLCIPHER_CRYPTO_OPENSSL \
+            -DSQLITE_EXTRA_INIT=sqlcipher_extra_init \
+            -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown \
             -DSQLITE_OMIT_LOAD_EXTENSION \
             -DSQLITE_THREADSAFE=0 \
             -DSQLITE_ENABLE_FTS5 \
