@@ -1,0 +1,69 @@
+FROM emscripten/emsdk:3.1.74
+
+WORKDIR /build
+
+# Install build tools for SQLCipher amalgamation
+RUN apt-get update && apt-get install -y tcl autoconf automake libtool && rm -rf /var/lib/apt/lists/*
+
+# Copy vendored SQLCipher source
+COPY vendor/sqlcipher /build/sqlcipher
+
+# Build SQLCipher amalgamation with OpenSSL crypto provider
+RUN cd /build/sqlcipher && \
+    ./configure --enable-tempstore=yes \
+        CFLAGS="-DSQLITE_HAS_CODEC -DSQLCIPHER_CRYPTO_OPENSSL" && \
+    make sqlite3.c && \
+    cp sqlite3.c sqlite3.h /build/
+
+# Copy WASM wrapper and build script
+COPY wasm/wyatt_wasm.c /build/src/wyatt_wasm.c
+COPY wasm/shim.js /build/src/shim.js
+
+RUN mkdir -p /out
+
+# Add key function to the WASM wrapper
+RUN cat >> /build/src/wyatt_wasm.c <<'EOF'
+
+/* SQLCipher key — call after open, before any other operation */
+int wasm_db_key(sqlite3 *db, const char *key, int key_len) {
+    return sqlite3_key(db, key, key_len);
+}
+EOF
+
+ENTRYPOINT ["bash", "-c", "\
+EXPORTED='[ \
+  \"_wasm_db_open\", \"_wasm_db_close\", \"_wasm_db_exec\", \"_wasm_db_errmsg\", \
+  \"_wasm_db_key\", \
+  \"_wasm_db_prepare\", \"_wasm_stmt_finalize\", \"_wasm_stmt_reset\", \
+  \"_wasm_stmt_step\", \"_wasm_stmt_run\", \
+  \"_wasm_stmt_bind_text\", \"_wasm_stmt_bind_int\", \"_wasm_stmt_bind_double\", \"_wasm_stmt_bind_null\", \
+  \"_wasm_stmt_columns\", \"_wasm_stmt_colname\", \"_wasm_stmt_coltype\", \
+  \"_wasm_stmt_int\", \"_wasm_stmt_double\", \"_wasm_stmt_text\", \
+  \"_malloc\", \"_free\" \
+]' && \
+RUNTIME='[\"cwrap\",\"UTF8ToString\",\"stringToUTF8\",\"lengthBytesUTF8\"]' && \
+cp /build/sqlite3.c /build/src/sqlite3.c && \
+cp /build/sqlite3.h /build/src/sqlite3.h && \
+emcc /build/src/wyatt_wasm.c \
+  -I/build/src \
+  -O2 \
+  -DSQLITE_HAS_CODEC \
+  -DSQLCIPHER_CRYPTO_OPENSSL \
+  -DSQLITE_OMIT_LOAD_EXTENSION \
+  -DSQLITE_THREADSAFE=0 \
+  -DSQLITE_ENABLE_FTS5 \
+  -DSQLITE_ENABLE_JSON1 \
+  -s WASM=1 \
+  -s EXPORTED_FUNCTIONS=\"$EXPORTED\" \
+  -s EXPORTED_RUNTIME_METHODS=\"$RUNTIME\" \
+  -s ALLOW_MEMORY_GROWTH=1 \
+  -s INITIAL_MEMORY=16777216 \
+  -s MODULARIZE=1 \
+  -s EXPORT_NAME='initSqlcipher' \
+  -s ENVIRONMENT='web,worker,node' \
+  -s FILESYSTEM=0 \
+  -lssl -lcrypto \
+  -o /out/sqlcipher.js && \
+cp /build/src/shim.js /out/shim.js && \
+echo '=== Output ===' && ls -lh /out/ \
+"]
