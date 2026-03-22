@@ -11,17 +11,19 @@ import os
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src")
+VENDOR_QJSON = os.path.join(ROOT, "vendor", "qjson", "src")
 OUT = os.path.join(ROOT, "native", "y8_js_embed.h")
 
 # Modules in load order (dependencies first)
+# Each entry: (filename, c_var_name, source_dir)
 MODULES = [
-    ("reactive.js",        "y8_js_reactive"),
-    ("prolog-engine.js",   "y8_js_prolog_engine"),
-    ("parser.js",          "y8_js_parser"),
-    ("reactive-prolog.js", "y8_js_reactive_prolog"),
-    ("qjson.js",           "y8_js_qjson"),
-    ("persist.js",         "y8_js_persist"),
-    ("fossilize.js",       "y8_js_fossilize"),
+    ("reactive.js",        "y8_js_reactive",        SRC),
+    ("prolog-engine.js",   "y8_js_prolog_engine",   SRC),
+    ("parser.js",          "y8_js_parser",           SRC),
+    ("reactive-prolog.js", "y8_js_reactive_prolog",  SRC),
+    ("qjson.js",           "y8_js_qjson",            VENDOR_QJSON),
+    ("persist.js",         "y8_js_persist",           SRC),
+    ("fossilize.js",       "y8_js_fossilize",         SRC),
 ]
 
 
@@ -67,8 +69,8 @@ def main():
     header += "   Source: src/ */\n"
     header += "#ifndef Y8_JS_EMBED_H\n#define Y8_JS_EMBED_H\n\n"
 
-    for filename, var_name in MODULES:
-        path = os.path.join(SRC, filename)
+    for filename, var_name, src_dir in MODULES:
+        path = os.path.join(src_dir, filename)
         raw = open(path).read()
         clean = strip_esm(raw)
         header += to_c_string(clean, var_name) + "\n"

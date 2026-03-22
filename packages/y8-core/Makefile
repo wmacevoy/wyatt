@@ -11,15 +11,16 @@ else
   LDFLAGS = -shared
 endif
 
-SOURCES = $(ROOT)/native/y8_qjson.c \
-          $(ROOT)/vendor/libbf/libbf.c \
-          $(ROOT)/vendor/libbf/cutils.c
+SOURCES = $(ROOT)/vendor/qjson/native/qjson.c \
+          $(ROOT)/vendor/qjson/native/libbf/libbf.c \
+          $(ROOT)/vendor/qjson/native/libbf/cutils.c
 
 all: $(SO)
 
 $(SO): $(SOURCES)
-	$(CC) $(CFLAGS) $(LDFLAGS) -DY8_USE_LIBBF \
-		-I$(ROOT)/vendor/libbf \
+	$(CC) $(CFLAGS) $(LDFLAGS) -DQJSON_USE_LIBBF \
+		-I$(ROOT)/vendor/qjson/native \
+		-I$(ROOT)/vendor/qjson/native/libbf \
 		-o $@ $^ -lm
 
 test: $(SO)

@@ -1,6 +1,6 @@
 // y8-core.js — Canonical interval projection via native libbf
 //
-// Loads the y8_core shared library (built from libbf + y8_qjson.c).
+// Loads the y8_core shared library (built from libbf + qjson.c via vendor/qjson).
 // Falls back to pure JS polyfill if native not available.
 //
 // Usage:

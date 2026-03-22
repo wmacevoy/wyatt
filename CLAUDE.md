@@ -65,15 +65,20 @@ SQLite / SQLCipher (encrypted at rest) / WASM SQLite (browser)
 | `persist-pg.js` / `persist_pg.py` | PostgreSQL adapter | pg driver |
 | `persist-wasm.js` | Bridge: WASM SQLite → persist adapter (browser) | WASM binary |
 | `qsql.js` / `qsql.py` | QSQL: per-predicate typed columns + interval arithmetic | engine + adapter |
-| `qjson.js` / `qjson.py` | QJSON: JSON + `N`/`M`/`L` bignums + comments | nothing |
 | `fossilize.js` / `fossilize.py` | `fossilize()` (global freeze) + `mineralize()` (selective lock) | engine |
+
+### Vendor (`vendor/`)
+
+| Submodule | Role |
+|-----------|------|
+| `vendor/qjson` | QJSON: JSON + `N`/`M`/`L`/`0j`/`?` types, interval projection, SQL adapter |
+| `vendor/quickjs` | QuickJS JS engine |
 
 ### Native C (`native/`)
 
 | File | Role |
 |------|------|
 | `y8.h` / `y8.c` | Embeddable C API: QuickJS + SQLite. Text in, text out |
-| `y8_qjson.h` / `y8_qjson.c` | QJSON parser + interval projection, arena-allocated, 3.5M msg/sec, zero malloc |
 | `prolog_core.h` / `prolog_core.c` | 32-bit tagged terms, unification, trail-based backtracking |
 | `y8_js_embed.h` | Auto-generated: all JS modules as C string literals |
 

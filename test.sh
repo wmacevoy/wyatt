@@ -29,8 +29,6 @@ if [ -z "$1" ] || [ "$1" = "c" ]; then
   if command -v gcc >/dev/null 2>&1; then
     run "C native core (19 tests)" \
       "gcc -O2 -Wall -std=c11 -o native/test_core native/test_core.c native/prolog_core.c && ./native/test_core && rm -f native/test_core"
-    run "C native y8_qjson (141 tests)" \
-      "gcc -O2 -Wall -std=c11 -frounding-math -o native/test_y8_qjson native/test_y8_qjson.c native/y8_qjson.c -lm && ./native/test_y8_qjson && rm -f native/test_y8_qjson"
     run "C native y8_net (64 tests)" \
       "gcc -O2 -Wall -std=c11 -o native/test_y8_net native/test_y8_net.c native/y8_net.c -lssl -lcrypto && ./native/test_y8_net && rm -f native/test_y8_net"
   else
@@ -49,8 +47,6 @@ if [ -z "$1" ] || [ "$1" = "python" ]; then
       "$PYTHON src/test_persist.py"
     run "Python QSQL ($PYTHON, 27 tests)" \
       "$PYTHON src/test_qsql.py"
-    run "Python QJSON ($PYTHON, 37 tests)" \
-      "$PYTHON src/test_qjson.py"
     run "Python fossilize ($PYTHON, 9 tests)" \
       "$PYTHON src/test_fossilize.py"
     run "Python vending machine ($PYTHON, 17 tests)" \
@@ -75,8 +71,6 @@ if [ -z "$1" ] || [ "$1" = "js" ]; then
       "$JS src/test-qsql.js"
     run "JS store ($JS, 35 tests)" \
       "$JS src/test-store.js"
-    run "JS QJSON ($JS, 25 tests)" \
-      "$JS src/test-qjson.js"
     run "JS fossilize ($JS, 9 tests)" \
       "$JS src/test-fossilize.js"
     run "JS vending machine ($JS, 22 tests)" \
